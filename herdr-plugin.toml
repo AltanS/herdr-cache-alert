@@ -1,6 +1,6 @@
 id = "herdr.cache-alert"
 name = "Cache Alert"
-version = "0.1.1"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
 description = "Show when an agent pane's prompt cache expires, and mark the turns that missed it"
 platforms = ["linux", "macos"]
@@ -79,6 +79,20 @@ title = "Cache: finish setup"
 description = "Link the plugin, install the `herdr-cache-alert` CLI, and start the watcher"
 contexts = ["global"]
 command = ["bash", "scripts/run.sh", "action", "setup"]
+
+# Removal has to be invokable from HERE as well as from a shell, because the
+# CLI symlink is one of the things it removes — an operator who has already lost
+# it, or who never had ~/.local/bin on PATH, would otherwise have no way in.
+#
+# The ORDER is not the obvious one: unlink first, THEN stop the watcher, THEN
+# clear. The event hooks are self-healing, so clearing while they are still
+# registered spawns a fresh watcher that repaints everything. See src/uninstall.ts.
+[[actions]]
+id = "uninstall"
+title = "Cache: remove this plugin"
+description = "Unlink, stop the watchers, clear every badge, and strip the config blocks we wrote"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "uninstall"]
 
 # Link-mode plugins ARE their on-disk git checkout, and Herdr has no native
 # `plugin update`, so this action pulls and re-links in one step. Without it,

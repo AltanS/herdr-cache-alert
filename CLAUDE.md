@@ -228,11 +228,25 @@ recently the agent happened to reply.
   what makes the reload fan out.
 - **Uninstall in the order UNLINK, STOP, CLEAR.** The plugin is self-healing: while
   the `[[events]]` hooks are still registered, clearing the badges fires `ensure`,
-  which spawns a fresh watcher and repaints everything. There is no `uninstall`
-  command, so this order is the whole procedure.
+  which spawns a fresh watcher and repaints everything. `src/uninstall.ts` does
+  this in the right order; do not reorder it for tidiness.
 - **`herdr pane list` reports metadata whose `--ttl-ms` has expired.** The RENDER
   honours the TTL; the API dump does not. A badge visible in `pane list` is not
   proof of a badge on screen — do not use it to conclude a paint is still live.
+- **A MIGRATION THAT STRIPS OLD BLOCKS CAN EAT THE NEW ONE.** `stripLegacyBlocks`
+  matches the prose comment the pre-marker sidebar block opened with — and our
+  MARKED block still opens with that same comment. Unguarded, a re-run of `setup`
+  emptied the block from between its own markers and printed a tick. The stripper
+  is skipped for any block that already has markers. Whenever old and new content
+  overlap textually, the migration must be gated on the NEW form's presence, not
+  on the old form's pattern.
+- **Everything written to `config.toml` is MARKED.** `# cache-alert:begin <name>`
+  / `# cache-alert:end <name>`, one region per concern, all of it in
+  `src/config-toml.ts`. That is what makes `uninstall` exact and `setup`
+  idempotent. Anything outside those markers is the operator's: report it, never
+  rewrite it. Validate on a throwaway copy via `HERDR_CONFIG_PATH` BEFORE their
+  file is touched — write-then-restore leaves a window where their config is
+  broken, and a crash in that window leaves it broken for good.
 - **Never key state by pane id.** Pane ids change on move and on server restart. The harness's
   session id is the identity of the conversation whose cache this is.
 - **A pane ALONE IN ITS TAB has no border, and nothing can give it one.** Herdr's own embedded config

@@ -1,26 +1,43 @@
 /**
  * `setup` — make the plugin usable in one command, and be safe to re-run.
  *
- * Five steps, all idempotent: link the plugin, put the CLI on PATH, add the one
- * keybinding, start the watcher, and paint the badges once so the operator sees
- * a result rather than a blank sidebar.
+ * Eight steps, every one idempotent: link the plugin into every running Herdr
+ * server, put the CLI on PATH, add the one keybinding, style the sidebar, add
+ * the tab-bar countdown, turn the agent-list badge on, start this session's
+ * watcher, and paint once so the operator sees a result rather than a blank
+ * sidebar.
  *
- * The keybinding is the only thing here that touches a file the operator owns,
- * so it is the only step that is defensive about it: it refuses a chord already
- * in use, keeps a backup, validates with `herdr config check` BEFORE the config
- * is left in place, and restores the backup if that check fails. `--no-keys`
- * skips it entirely.
+ * THE CONFIG STEPS ARE THE DANGEROUS ONES, and none of them writes directly:
+ * every one goes through `config-toml.ts`, which wraps our text in markers,
+ * validates the change on a THROWAWAY copy before the operator's file is
+ * touched, and reloads every server afterwards. What that buys is `uninstall` —
+ * the markers say exactly which bytes are ours, so removing them is not a guess.
+ *
+ * Anything the operator wrote themselves is REPORTED, never rewritten.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, unlinkSync, lstatSync, readlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, lstatSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { BIN, PLUGIN_ID, pluginRoot } from "./config.ts";
-import { allStateTokens, herdrBin } from "./herdr.ts";
-import { runSafe, errorMessage } from "./runtime.ts";
-import { setAgentList } from "./store.ts";
+import { allStateTokens } from "./herdr.ts";
+import {
+  BLOCKS,
+  configPath,
+  onEveryServer,
+  readBlock,
+  stripLegacyBlocks,
+  upsertBlock,
+  writeConfig,
+  type Step,
+} from "./config-toml.ts";
+import { errorMessage } from "./runtime.ts";
+import { agentListEnabled, setAgentList } from "./store.ts";
 import { syncAll } from "./sync.ts";
 import { BADGE_TTL_MS, runningWatcher } from "./watch.ts";
+
+export { PLUGIN_ID, pluginRoot };
+export type { Step };
 
 /**
  * The one chord. Checked against Herdr 0.8.2's defaults, which use no `alt` at
@@ -31,48 +48,31 @@ import { BADGE_TTL_MS, runningWatcher } from "./watch.ts";
  */
 export const TOGGLE_KEY = "prefix+alt+c";
 
-const CONFIG_PATH =
-  process.env.HERDR_CONFIG_PATH || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "herdr", "config.toml");
-
-const KEY_BLOCK = `
-# cache-alert: mirror the cache badge into the agent list (the pane border
-# always shows it; this is the second, opt-in sighting).
-[[keys.command]]
+const KEY_BODY = `[[keys.command]]
 key = "${TOGGLE_KEY}"
 type = "plugin_action"
 command = "${PLUGIN_ID}.toggle"
-description = "Toggle the cache badge in the agent list"
-`;
+description = "Toggle the cache badge in the agent list"`;
 
-export { PLUGIN_ID };
-
-export interface Step {
-  ok: boolean;
-  what: string;
-  detail: string;
-}
+/** The config this file reads, so a caller can report it without importing two modules. */
+export { configPath };
 
 /**
- * The checkout this file lives in. `HERDR_PLUGIN_ROOT` is injected for plugin
- * commands; the CLI runs in a plain shell and has to work it out from `import.meta`.
+ * Links the plugin into EVERY running Herdr server.
+ *
+ * `herdr --session <name>` is a whole separate server with its own plugin
+ * registry, so a link into one leaves the others with no panes, actions or
+ * event hooks at all.
  */
-export { pluginRoot };
-
 async function linkPlugin(root: string): Promise<Step> {
-  // Every session is a separate server with its own plugin registry, so a link
-  // into one leaves the others with no panes, actions or event hooks at all.
   const res = await onEveryServer(["plugin", "link", root]);
   if (res.done === 0) {
     return { ok: false, what: "plugin", detail: "could not link — is a Herdr server running?" };
   }
-  // "did not answer", not "refused": the usual cause is a socket file left behind
-  // by a server that is gone, and telling the operator to re-run there sends them
-  // after a session that does not exist.
   const where = res.failed.length > 0 ? ` (${res.failed.join(", ")} did not answer — probably not running)` : "";
-  return { ok: true, what: "plugin", detail: `linked ${PLUGIN_ID} into ${res.done} session(s) from ${root}${where}` };
+  return { ok: true, what: "plugin", detail: `linked into ${res.done} session(s) from ${root}${where}` };
 }
 
-/** Symlinks `bin/herdr-cache-alert` into ~/.local/bin, replacing our own old link. */
 function installCli(root: string): Step {
   const target = join(root, "bin", BIN);
   const dir = join(homedir(), ".local", "bin");
@@ -105,9 +105,15 @@ function installCli(root: string): Step {
  * setup. Without it the badge would only repaint on Herdr events, which is
  * exactly when a countdown does not need repainting.
  */
+
+/**
+ * Starts the watcher detached, so it outlives the shell or the action that ran
+ * setup. Without it the badge would only repaint on Herdr events, which is
+ * exactly when a countdown does not need repainting.
+ */
 async function startWatcher(root: string): Promise<Step> {
   const running = runningWatcher();
-  if (running !== null) return { ok: true, what: "watcher", detail: `already running (pid ${running})` };
+  if (running !== null) return { ok: true, what: "watcher", detail: `already running (pid ${running})`, skipped: true };
   const { spawn } = await import("node:child_process");
   const child = spawn("bash", [join(root, "scripts", "run.sh"), "cli", "watch"], {
     detached: true,
@@ -117,63 +123,6 @@ async function startWatcher(root: string): Promise<Step> {
   return { ok: true, what: "watcher", detail: `started (pid ${child.pid}) — ticks every 30s` };
 }
 
-/**
- * Adds the toggle keybinding to `config.toml`, or explains why it did not.
- *
- * The order matters and is the whole point: write, THEN validate, THEN keep —
- * restoring the backup if the validation fails. A config Herdr refuses to parse
- * costs the operator every binding they have, not just ours.
- */
-async function installKeybinding(): Promise<Step> {
-  if (!existsSync(CONFIG_PATH)) {
-    return { ok: false, what: "keybinding", detail: `${CONFIG_PATH} does not exist — start Herdr once, then re-run setup` };
-  }
-  const before = readFileSync(CONFIG_PATH, "utf8");
-
-  // Already ours: nothing to do. Already SOMEONE's: never take a chord the
-  // operator has assigned, and say so rather than fail silently.
-  if (before.includes(`${PLUGIN_ID}.toggle`)) {
-    return { ok: true, what: "keybinding", detail: `${TOGGLE_KEY} is already bound to the toggle` };
-  }
-  if (new RegExp(`key\\s*=\\s*"${TOGGLE_KEY.replace(/\+/g, "\\+")}"`).test(before)) {
-    return {
-      ok: true,
-      what: "keybinding",
-      detail: `${TOGGLE_KEY} is already bound to something else — left alone. Bind \`${PLUGIN_ID}.toggle\` to a chord you prefer.`,
-    };
-  }
-
-  const backup = `${CONFIG_PATH}.cache-alert-backup`;
-  try {
-    copyFileSync(CONFIG_PATH, backup);
-    writeFileSync(CONFIG_PATH, before + KEY_BLOCK);
-  } catch (err) {
-    return { ok: false, what: "keybinding", detail: `could not write ${CONFIG_PATH}: ${errorMessage(err)}` };
-  }
-
-  const check = await runSafe([herdrBin()], ["config", "check"]);
-  if (check.code !== 0) {
-    writeFileSync(CONFIG_PATH, before);
-    return {
-      ok: false,
-      what: "keybinding",
-      detail: `${TOGGLE_KEY} did not validate — your config was restored untouched (${check.stdout.trim() || check.stderr.trim()})`,
-    };
-  }
-
-  // Reload, so the key works now rather than after the operator's next restart.
-  const reload = await runSafe([herdrBin()], ["server", "reload-config"]);
-  const note = reload.code === 0 ? "" : " — run `herdr server reload-config` to activate it";
-  return { ok: true, what: "keybinding", detail: `${TOGGLE_KEY} bound (backup at ${backup})${note}` };
-}
-
-/**
- * The sidebar block, which is what gives the badge COLOUR.
- *
- * Herdr styles a row token statically — one `fg` per token name — so one token
- * could only ever be one colour. Three state tokens, of which exactly one is
- * ever set, is what buys green/yellow/red.
- */
 export const SIDEBAR_BLOCK = `
 # cache-alert: show the prompt-cache countdown beside each agent, coloured by
 # state. Exactly one of these three tokens is ever set, so only one renders.
@@ -194,125 +143,8 @@ export const SIDEBAR_BLOCK = `
 rows = [["state_icon", "workspace", "tab"], ["agent", { token = "$cache_warm", fg = "#a6e3a1", bold = true }, { token = "$cache_expiring", fg = "#f9e2af", bold = true }, { token = "$cache_cold", fg = "#f38ba8", bold = true }, { token = "$cache_warm_focus", fg = "#166534", bold = true }, { token = "$cache_expiring_focus", fg = "#92400e", bold = true }, { token = "$cache_cold_focus", fg = "#991b1b", bold = true }]]
 `;
 
-/** The `rows = ...` line inside SIDEBAR_BLOCK. Derived, so the two cannot drift. */
-const ROWS_LINE = SIDEBAR_BLOCK.split("\n").find((line) => line.startsWith("rows = ")) ?? "";
-
-/**
- * Reloads EVERY running Herdr server, and reports the ones that refused.
- *
- * `herdr --session <name>` is a whole separate server with its own socket and
- * its own copy of the config in memory. Reloading only the socket this shell
- * happens to point at leaves every other session running the OLD sidebar rows —
- * and the sidebar renders a `$cache_*` token only if the rows it has loaded
- * name it. So a session that missed the reload paints nothing on the row it was
- * asked to paint, forever, no matter how often the watcher repaints. Same trap
- * as the per-session watcher, one layer down.
- *
- * The result used to be discarded, which made a failed reload indistinguishable
- * from a successful one — the operator was told the feature was installed and
- * then saw nothing.
- */
-function runningSockets(): Array<{ sock: string; name: string }> {
-  const dir = join(homedir(), ".config", "herdr");
-  const out: Array<{ sock: string; name: string }> = [];
-  const def = join(dir, "herdr.sock");
-  if (existsSync(def)) out.push({ sock: def, name: "default" });
-  const sessions = join(dir, "sessions");
-  if (existsSync(sessions)) {
-    for (const name of readdirSync(sessions)) {
-      const sock = join(sessions, name, "herdr.sock");
-      if (existsSync(sock)) out.push({ sock, name });
-    }
-  }
-  return out;
-}
-
-/**
- * Runs one `herdr` command against every server, and names the ones that
- * refused. `ok` is false only when NOTHING succeeded — a session whose socket
- * is stale on disk must not fail an otherwise good install.
- */
-async function onEveryServer(args: string[]): Promise<{ done: number; failed: string[] }> {
-  let done = 0;
-  const failed: string[] = [];
-  for (const { sock, name } of runningSockets()) {
-    const res = await runSafe([herdrBin()], args, { HERDR_SOCKET_PATH: sock });
-    if (res.code === 0) done += 1;
-    else failed.push(name);
-  }
-  return { done, failed };
-}
-
-/**
- * Writes `content` to the config, keeping a backup and validating before leaving
- * it in place. The order is the whole point: write, THEN validate, THEN keep —
- * restoring the backup if it fails. A config Herdr refuses to parse costs the
- * operator every setting they have, not just ours.
- */
-async function writeConfig(content: string, what: string, detail: string): Promise<Step> {
-  const before = readFileSync(CONFIG_PATH, "utf8");
-  try {
-    copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.cache-alert-backup`);
-    writeFileSync(CONFIG_PATH, content);
-  } catch (err) {
-    return { ok: false, what, detail: `could not write ${CONFIG_PATH}: ${errorMessage(err)}` };
-  }
-  const check = await runSafe([herdrBin()], ["config", "check"]);
-  if (check.code !== 0) {
-    writeFileSync(CONFIG_PATH, before);
-    return {
-      ok: false,
-      what,
-      detail: `did not validate — your config was restored untouched (${check.stdout.trim() || check.stderr.trim()})`,
-    };
-  }
-  // Herdr does not hot-reload config.toml; without this the change sits inert.
-  const reload = await onEveryServer(["server", "reload-config"]);
-  if (reload.done === 0) {
-    return { ok: false, what, detail: `${detail} — but no Herdr server accepted the reload, so it is not live yet. Run \`herdr server reload-config\`.` };
-  }
-  if (reload.failed.length > 0) {
-    return { ok: true, what, detail: `${detail} (still stale in ${reload.failed.join(", ")} — run \`herdr server reload-config\` there)` };
-  }
-  return { ok: true, what, detail };
-}
-
-/**
- * Adds the sidebar block, but ONLY when the operator has no `[ui.sidebar.agents]`
- * of their own.
- *
- * Sidebar rows are a display preference somebody chose deliberately. Rewriting
- * one to insert our token would be taking a decision that is not ours, and a
- * TOML round-trip would eat their comments on the way through. So the moment
- * that section exists, this prints the line to paste and changes nothing.
- */
-async function installSidebar(): Promise<Step> {
-  if (!existsSync(CONFIG_PATH)) {
-    return { ok: false, what: "sidebar", detail: `${CONFIG_PATH} does not exist — start Herdr once, then re-run setup` };
-  }
-  const before = readFileSync(CONFIG_PATH, "utf8");
-  // A rows line carrying our tokens is one WE wrote, so bring it up to date in
-  // place rather than leaving a half-configured sidebar behind. Only that one
-  // line is rewritten: everything else in the file, including the operator's
-  // comments, is untouched, which a TOML round-trip could not promise.
-  const ours = before.split("\n").find((line) => line.startsWith("rows = ") && line.includes("$cache_"));
-  if (ours) {
-    if (ours === ROWS_LINE) {
-      return { ok: true, what: "sidebar", detail: "the cache tokens are already in your sidebar rows" };
-    }
-    return writeConfig(before.replace(ours, ROWS_LINE), "sidebar", "updated the cache tokens in your sidebar rows");
-  }
-  if (/^\s*\[ui\.sidebar\.agents\]/m.test(before)) {
-    return {
-      ok: true,
-      what: "sidebar",
-      detail:
-        "you already customise [ui.sidebar.agents] — left alone. Run `herdr-cache-alert sidebar-snippet` and paste the tokens into your own rows.",
-    };
-  }
-
-  return writeConfig(before + SIDEBAR_BLOCK, "sidebar", "cache tokens added to the agent sidebar, coloured by state");
-}
+/** The `[ui.sidebar.agents]` body, without the explanatory comment header. */
+const SIDEBAR_BODY = SIDEBAR_BLOCK.trim();
 
 /** The tab-bar entry, as TOML. `root` is the checkout, so the path is absolute. */
 export function tabBarEntry(root: string): string {
@@ -323,64 +155,88 @@ export function tabBarEntry(root: string): string {
   return `{ type = "command", command = "${join(root, "bin", BIN)} tabbar", interval_seconds = 5, timeout_seconds = 3 }`;
 }
 
-/**
- * Adds the tab-bar status entry — the surface that works on a solo pane.
- *
- * The insertion point is the fiddly part. `tab_bar_right` belongs to `[ui]`, and
- * appending to the END of the file would drop it into whatever table happens to
- * be last — which, once we have written `[ui.sidebar.agents]`, is not `[ui]`.
- * TOML keys belong to the section above them, so this inserts directly after the
- * `[ui]` header instead.
- */
-async function installTabBar(root: string): Promise<Step> {
-  if (!existsSync(CONFIG_PATH)) {
-    return { ok: false, what: "tab bar", detail: `${CONFIG_PATH} does not exist — start Herdr once, then re-run setup` };
-  }
-  const before = readFileSync(CONFIG_PATH, "utf8");
+/** The config as it is on disk, with any unmarked block from an older release removed. */
+function currentConfig(): string {
+  return stripLegacyBlocks(readFileSync(configPath(), "utf8"));
+}
 
-  // OURS ALREADY, but possibly pointing at a checkout that has MOVED. A re-clone
-  // or a rename leaves the old absolute path in the entry; the command then fails,
-  // the entry clears itself, and the tab bar just goes blank. Setup used to report
-  // "already in your tab bar" over exactly that — a success message for a surface
-  // that was about to die.
-  const ourLine = before.split("\n").find((line) => line.includes(`${BIN} tabbar`));
-  if (ourLine !== undefined) {
-    const wanted = `tab_bar_right = [${tabBarEntry(root)}]`;
-    if (ourLine.trim() === wanted) {
-      return { ok: true, what: "tab bar", detail: "the countdown is already in your tab bar" };
-    }
-    // Only rewrite a line that is the whole entry and nothing but ours. A list the
-    // operator has added their own entries to is theirs, not ours to reformat.
-    if (ourLine.trimStart().startsWith("tab_bar_right = [") && ourLine.split("type = \"command\"").length === 2) {
-      return writeConfig(before.replace(ourLine, wanted), "tab bar", "repointed the tab-bar countdown at this checkout");
-    }
+function missingConfig(what: string): Step {
+  return { ok: false, what, detail: `${configPath()} does not exist — start Herdr once, then re-run setup` };
+}
+
+/**
+ * Adds the toggle keybinding, or explains why it did not.
+ *
+ * A chord already bound OUTSIDE our markers belongs to the operator. Taking it
+ * would silently steal a key they chose, so this reports and changes nothing.
+ */
+async function installKeybinding(): Promise<Step> {
+  if (!existsSync(configPath())) return missingConfig("keybinding");
+  const text = currentConfig();
+  const chord = new RegExp(`key\\s*=\\s*"${TOGGLE_KEY.replace(/\+/g, "\\+")}"`);
+  const outside = text.replace(readBlock(text, BLOCKS.keys) ?? "", "");
+  if (chord.test(outside)) {
     return {
       ok: true,
-      what: "tab bar",
-      detail: "your tab_bar_right holds our entry among others — check the path if you have moved this checkout (`herdr-cache-alert tabbar-snippet`)",
+      what: "keybinding",
+      detail: `${TOGGLE_KEY} is already bound to something else — left alone. Bind \`${PLUGIN_ID}.toggle\` to a chord you prefer.`,
     };
   }
-  // Never rewrite an existing list: it is ordered, it is capped, and it is
-  // theirs. Hand over the entry to paste and change nothing.
-  if (/^\s*tab_bar_right\s*=/m.test(before)) {
+  return writeConfig(upsertBlock(text, BLOCKS.keys, KEY_BODY, "eof"), "keybinding", `${TOGGLE_KEY} toggles the agent-list badge`);
+}
+
+/**
+ * Styles the sidebar tokens.
+ *
+ * A `[ui.sidebar.agents]` the operator wrote themselves is a display preference
+ * somebody chose deliberately, so it is left alone with the snippet to paste.
+ * Ours is rewritten in place, which is how a token added in a later release
+ * reaches an install that already had the older set.
+ */
+async function installSidebar(): Promise<Step> {
+  if (!existsSync(configPath())) return missingConfig("sidebar");
+  const text = currentConfig();
+  const outside = text.replace(readBlock(text, BLOCKS.sidebar) ?? "", "");
+  if (/^\s*\[ui\.sidebar\.agents\]/m.test(outside)) {
+    return {
+      ok: true,
+      what: "sidebar",
+      detail: "you already customise [ui.sidebar.agents] — left alone. Run `herdr-cache-alert sidebar-snippet` and paste the tokens into your own rows.",
+    };
+  }
+  return writeConfig(
+    upsertBlock(text, BLOCKS.sidebar, SIDEBAR_BODY, "eof"),
+    "sidebar",
+    "cache tokens styled in the agent sidebar",
+  );
+}
+
+/**
+ * Adds the tab-bar countdown — the surface that works on a pane alone in its tab.
+ *
+ * Two traps here, both load-bearing. `tab_bar_right` belongs to `[ui]`, and a key
+ * appended at the END of the file lands in whatever table happens to be last —
+ * which, once `[ui.sidebar.agents]` exists, is not `[ui]`. And the entry holds an
+ * ABSOLUTE path, so it rots the moment the checkout moves: the command fails, the
+ * entry clears itself (empty output clears it, by contract), and the tab bar goes
+ * blank with nothing reporting an error. `upsertBlock` rewrites our own entry, so
+ * a re-run after a move repoints it.
+ */
+async function installTabBar(root: string): Promise<Step> {
+  if (!existsSync(configPath())) return missingConfig("tab bar");
+  const text = currentConfig();
+  const outside = text.replace(readBlock(text, BLOCKS.tabbar) ?? "", "");
+  if (/^\s*tab_bar_right\s*=/m.test(outside)) {
     return {
       ok: true,
       what: "tab bar",
       detail: "you already set tab_bar_right — left alone. Run `herdr-cache-alert tabbar-snippet` and add the entry to your list.",
     };
   }
-
-  const entry = `tab_bar_right = [${tabBarEntry(root)}]`;
-  const comment = "# cache-alert: the prompt-cache countdown for the focused pane. Herdr re-runs\n# this on its own interval, which is why it keeps counting down while you are away.";
-  const uiHeader = /^\[ui\]\s*$/m.exec(before);
-  const next = uiHeader
-    ? before.slice(0, uiHeader.index + uiHeader[0].length) + `\n${comment}\n${entry}` + before.slice(uiHeader.index + uiHeader[0].length)
-    : `${before}\n[ui]\n${comment}\n${entry}\n`;
-
-  // Through the shared writer, which backs up, validates, restores on failure and
-  // reloads EVERY server. This step used to carry its own copy of that dance, and
-  // its own single-server reload — so a second session kept the old config.
-  return writeConfig(next, "tab bar", "countdown added to the tab bar — visible even on a pane alone in its tab");
+  const body = `tab_bar_right = [${tabBarEntry(root)}]`;
+  const had = readBlock(text, BLOCKS.tabbar);
+  const detail = had !== null && !had.includes(tabBarEntry(root)) ? "repointed the countdown at this checkout" : "countdown added to the tab bar";
+  return writeConfig(upsertBlock(text, BLOCKS.tabbar, body, { after: /^\[ui\]\s*$/m, orCreate: "[ui]" }), "tab bar", detail);
 }
 
 /**
@@ -425,6 +281,7 @@ async function paintNow(): Promise<Step> {
  * Hence: add token names, never rename or remove them, and let `doctor` say
  * when a config has fallen behind.
  */
+
 export interface SidebarTokenReport {
   /** Every `$name` the operator's rows line styles. */
   configured: string[];
@@ -436,8 +293,8 @@ export interface SidebarTokenReport {
 
 export function sidebarTokenReport(): SidebarTokenReport {
   const painted = allStateTokens();
-  if (!existsSync(CONFIG_PATH)) return { configured: [], missing: painted, unstyled: [] };
-  const rows = readFileSync(CONFIG_PATH, "utf8")
+  if (!existsSync(configPath())) return { configured: [], missing: painted, unstyled: [] };
+  const rows = readFileSync(configPath(), "utf8")
     .split("\n")
     .find((line) => line.trimStart().startsWith("rows = ") && line.includes("$cache_"));
   const configured = rows ? [...rows.matchAll(/\$([A-Za-z0-9_]+)/g)].map((m) => m[1] ?? "") : [];
@@ -457,7 +314,7 @@ export async function setup(options: SetupOptions = {}): Promise<Step[]> {
   const root = pluginRoot();
   const steps = [await linkPlugin(root), installCli(root)];
   if (options.noKeys) {
-    steps.push({ ok: true, what: "config", detail: `skipped (--no-keys) — nothing written to ${CONFIG_PATH}` });
+    steps.push({ ok: true, what: "config", detail: `skipped (--no-keys) — nothing written to ${configPath()}`, skipped: true });
   } else {
     const keys = await installKeybinding();
     const sidebar = await installSidebar();
@@ -467,13 +324,15 @@ export async function setup(options: SetupOptions = {}): Promise<Step[]> {
     // turning on when those tokens are actually in the operator's sidebar rows.
     // Turning it on without them would toggle something nothing renders.
     const tokensLive = sidebar.ok && !sidebar.detail.startsWith("you already customise");
+    const changed = agentListEnabled() !== tokensLive;
     setAgentList(tokensLive);
     steps.push({
       ok: true,
       what: "agent list",
       detail: tokensLive
-        ? "coloured $cache tokens ON — prefix+alt+c hides them"
+        ? "coloured badge ON — prefix+alt+c hides it"
         : "no badge: add the $cache tokens to ui.sidebar.agents.rows first, or the toggle has nothing to show",
+      skipped: !changed,
     });
   }
   steps.push(await startWatcher(root));

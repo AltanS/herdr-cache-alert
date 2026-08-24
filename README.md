@@ -42,7 +42,19 @@ git clone git@github.com:AltanS/herdr-cache-alert.git
 cd herdr-cache-alert && ./bin/herdr-cache-alert setup
 ```
 
-`setup` does the whole install and is safe to re-run:
+```
+✓ plugin      linked into 2 session(s) from ~/src/herdr-cache-alert
+✓ cli         installed ~/.local/bin/herdr-cache-alert
+✓ keybinding  prefix+alt+c toggles the agent-list badge
+✓ sidebar     cache tokens styled in the agent sidebar
+✓ tab bar     countdown added to the tab bar
+✓ agent list  coloured badge ON — prefix+alt+c hides it
+✓ watcher     started (pid 41233) — ticks every 30s
+✓ badges      painted 6 of 6 agent panes
+```
+
+`✓` did it · `·` nothing needed doing · `!` needs you, with the fix in the same line. A re-run is
+mostly dots. `setup` is safe to run again and it is how you repair a half-configured install:
 
 1. links the plugin into Herdr (`herdr plugin link`),
 2. puts `herdr-cache-alert` in `~/.local/bin`,
@@ -82,6 +94,44 @@ A routine update stays inside the major it is on. Crossing one needs the separat
 ```bash
 herdr plugin action invoke update-major --plugin herdr.cache-alert
 ```
+
+### Removing it
+
+```bash
+herdr-cache-alert uninstall            # or --dry-run first
+```
+
+```
+✓ plugin   unlinked from 2 session(s)
+✓ watcher  stopped 2
+✓ badges   cleared 20 pane(s)
+✓ config   removed keybinding, sidebar, tab-bar
+✓ cli      removed ~/.local/bin/herdr-cache-alert
+✓ state    removed ~/.local/state/herdr/plugins/herdr.cache-alert
+
+kept:
+  the checkout at ~/src/herdr-cache-alert — delete it yourself if you want it gone
+  ~/.config/herdr/config.toml.cache-alert-backup — your config as it was before we edited it
+```
+
+**The order is not the obvious one, and that is the point.** This plugin is self-healing: every
+Herdr event hook runs `ensure`, which starts a watcher if the session has none. Clearing the badges
+first fires a hook, which spawns a fresh watcher, which repaints everything you just cleared. So it
+unlinks first, then stops, then clears.
+
+Everything it writes to your `config.toml` sits between markers:
+
+```toml
+# cache-alert:begin sidebar — remove with `herdr-cache-alert uninstall`
+[ui.sidebar.agents]
+rows = [...]
+# cache-alert:end sidebar
+```
+
+That is what lets removal be exact rather than a regex guessing at your file. Anything outside those
+markers is yours: if you already set `tab_bar_right`, or already have a `[ui.sidebar.agents]`, or
+already bound `prefix+alt+c`, `setup` reports it and changes nothing. `--keep-config` skips the
+config step entirely; `--dry-run` prints what would go and touches nothing.
 
 ## What the badge means
 

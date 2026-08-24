@@ -8,11 +8,12 @@
  */
 
 import { badgeFor, explain } from "./badge.ts";
-import { BIN, loadConfig } from "./config.ts";
+import { BIN, PLUGIN_ID, loadConfig } from "./config.ts";
 import { evaluate } from "./engine.ts";
 import { getPane, listPanes, notify, openPluginPane } from "./herdr.ts";
 import { errorMessage } from "./runtime.ts";
 import { setup } from "./setup.ts";
+import { uninstall } from "./uninstall.ts";
 import { agentListEnabled, setAgentList } from "./store.ts";
 import { clearAll, syncAll } from "./sync.ts";
 import { update } from "./update.ts";
@@ -75,6 +76,21 @@ try {
       await notify(
         "cache-alert",
         on ? "Cache badge shown in the agent list" : "Cache badge hidden from the agent list — the tab bar and pane border keep it",
+      );
+      break;
+    }
+
+    case "uninstall": {
+      // Detached, so stdout only reaches the plugin log. The notification is the
+      // only thing the operator will see, and it has to name what was kept.
+      const steps = await uninstall();
+      for (const step of steps) console.log(`${step.ok ? "ok" : "!!"}  ${step.what}: ${step.detail}`);
+      const bad = steps.filter((step) => !step.ok);
+      await notify(
+        "cache-alert removed",
+        bad.length === 0
+          ? "Badges cleared, config restored, watcher stopped. The checkout is still on disk."
+          : `${bad.length} step(s) need you — see \`herdr plugin log list --plugin ${PLUGIN_ID}\``,
       );
       break;
     }

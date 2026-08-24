@@ -12,18 +12,23 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allStateTokens } from "../src/herdr.ts";
-import { SIDEBAR_BLOCK, TOGGLE_KEY, tabBarEntry } from "../src/setup.ts";
+import { SIDEBAR_BLOCK, TOGGLE_KEY, sidebarTokenReport, tabBarEntry } from "../src/setup.ts";
 
 const ROWS_LINE = SIDEBAR_BLOCK.split("\n").find((line) => line.startsWith("rows = ")) ?? "";
 
-/** Loads a fresh copy of setup.ts pointed at `toml`, since CONFIG_PATH is read at import. */
-async function reportFor(toml: string, nonce: number) {
+/**
+ * Points the plugin at a throwaway config and asks what it makes of it.
+ *
+ * No dynamic-import trick any more: the config path is resolved on every CALL,
+ * so setting the variable is enough. A path captured at module load would make
+ * the answer depend on which module happened to import first.
+ */
+function reportFor(toml: string) {
   const dir = mkdtempSync(join(tmpdir(), "cache-alert-test-"));
   const path = join(dir, "config.toml");
   writeFileSync(path, toml);
   process.env.HERDR_CONFIG_PATH = path;
-  const mod = await import(`../src/setup.ts?cfg=${nonce}`);
-  return mod.sidebarTokenReport();
+  return sidebarTokenReport();
 }
 
 test("the sidebar block styles EVERY token the painter can set", () => {
@@ -65,29 +70,29 @@ test("the toggle chord uses alt, which Herdr 0.8.2's own defaults do not", () =>
   assert.equal(TOGGLE_KEY, "prefix+alt+c");
 });
 
-test("sidebarTokenReport finds nothing missing when the config is ours", async () => {
-  const report = await reportFor(SIDEBAR_BLOCK, 1);
+test("sidebarTokenReport finds nothing missing when the config is ours", () => {
+  const report = reportFor(SIDEBAR_BLOCK);
   assert.deepEqual(report.missing, []);
   assert.deepEqual(report.unstyled, []);
   assert.equal(report.configured.length, 6);
 });
 
-test("a config that predates the _focus tokens is reported as MISSING them", async () => {
+test("a config that predates the _focus tokens is reported as MISSING them", () => {
   const old = '[ui.sidebar.agents]\nrows = [["agent", { token = "$cache_warm", fg = "#a6e3a1" }]]\n';
-  const report = await reportFor(old, 2);
+  const report = reportFor(old);
   assert.deepEqual(report.configured, ["cache_warm"]);
   assert.equal(report.missing.length, 5);
   assert.ok(report.missing.includes("cache_warm_focus"));
 });
 
-test("a config naming a token we no longer paint is reported as UNSTYLED", async () => {
+test("a config naming a token we no longer paint is reported as UNSTYLED", () => {
   const stale = '[ui.sidebar.agents]\nrows = [["agent", { token = "$cache_ancient", fg = "#fff" }]]\n';
-  const report = await reportFor(stale, 3);
+  const report = reportFor(stale);
   assert.deepEqual(report.unstyled, ["cache_ancient"]);
 });
 
-test("a config with no cache row at all leaves every token missing", async () => {
-  const report = await reportFor('[ui]\nsidebar_width = 30\n', 4);
+test("a config with no cache row at all leaves every token missing", () => {
+  const report = reportFor('[ui]\nsidebar_width = 30\n');
   assert.deepEqual(report.configured, []);
   assert.equal(report.missing.length, 6);
 });

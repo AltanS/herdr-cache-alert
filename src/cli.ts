@@ -18,7 +18,9 @@ import { agentListEnabled, allMemos, setAgentList, STATE_DIR } from "./store.ts"
 import { clearAll, syncAll, syncPane } from "./sync.ts";
 import { runTabbar } from "./tabbar.ts";
 import { update, wantsMajor } from "./update.ts";
-import { pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry } from "./setup.ts";
+import { pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
+import { keptAfterUninstall, uninstall } from "./uninstall.ts";
+import { report } from "./report.ts";
 import { BADGE_TTL_MS, ensureWatcher, runningWatcher, stopWatcher, watch } from "./watch.ts";
 
 const argv = process.argv.slice(2);
@@ -46,7 +48,10 @@ const USAGE = `${BIN} — prompt-cache countdown for Herdr agent panes
   watch [--force|stop|status]
                          the ticking painter — one per Herdr session
   clear                  remove every badge this plugin painted
-  setup [--no-keys]      link the plugin, install this CLI, bind the key, start the watcher
+  setup [--no-keys]      link the plugin, install this CLI, bind the key, start the
+                         watcher and paint once — safe to re-run
+  uninstall [--dry-run] [--keep-config]
+                         remove every trace, in the order that actually works
   update [--major]       advance the checkout and re-register it
   doctor                 resolved paths and detection state, for a bug report`;
 
@@ -228,8 +233,23 @@ async function main(): Promise<number> {
 
     case "setup": {
       const steps = await setup({ noKeys: has("no-keys") });
-      for (const step of steps) console.log(`${step.ok ? "ok" : "FAILED"}  ${step.what}: ${step.detail}`);
-      return steps.every((step) => step.ok) ? 0 : 1;
+      // The footer is the part people actually act on: the badge is ambient and
+      // easy to miss, and the toggle is invisible unless somebody says the chord.
+      const notes = [
+        `keys: ${TOGGLE_KEY} → show or hide the badge in the agent list`,
+        "next: leave a pane idle and watch the number fall. `herdr-cache-alert explain` says where it comes from.",
+        "undo: `herdr-cache-alert uninstall` removes every trace, config included.",
+      ];
+      return report(steps, steps.every((step) => step.ok) ? notes : [...notes, "", "Fix the `!` lines above and re-run — setup is safe to run again."]);
+    }
+
+    case "uninstall": {
+      const steps = await uninstall({ keepConfig: has("keep-config"), dryRun: has("dry-run") });
+      if (has("dry-run")) {
+        return report(steps, ["Nothing was changed. Re-run without --dry-run to do it."]);
+      }
+      const kept = keptAfterUninstall(pluginRoot());
+      return report(steps, ["kept:", ...kept.map((line) => `  ${line}`)]);
     }
 
     case "update": {

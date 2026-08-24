@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-08-24
+
+### Added
+- **`uninstall`** — removes every trace, and does it in the order that actually works: unlink from every server, THEN stop the watchers, THEN clear the badges. The obvious order fails, because the event hooks are self-healing and clearing while they are registered spawns a fresh watcher that repaints everything. `--dry-run` prints what would go; `--keep-config` leaves `config.toml` alone. There is a matching plugin action, so it can be invoked from Herdr — the CLI symlink is one of the things it removes.
+- **Marked config blocks.** Everything written to `config.toml` now sits between `# cache-alert:begin <name>` and `# cache-alert:end <name>`. That is what makes removal exact instead of a regex guessing at the operator's file, and what lets `setup` replace its own older block in place. An unmarked block from 0.1.x is migrated on the next `setup`.
+- `--dry-run` and `--keep-config` on `uninstall`.
+
+### Changed
+- **`setup` reports like its siblings**: `✓` did it, `·` nothing needed doing, `!` needs you with the fix in the same line — never a red ✗, because a step that found something of yours and refused to touch it did not fail. A re-run is now mostly dots. It closes with the chord, what to try next, and how to undo it.
+- **Config changes are validated on a THROWAWAY copy before the operator's file is touched at all.** Writing first and restoring on failure leaves a window where their config is broken, and if the process dies in that window it stays broken.
+- All three config edits go through one module (`src/config-toml.ts`) with one writer. They were three hand-rolled strategies with three copies of the backup/validate/restore dance, and one of them reloaded a single server.
+- The config path resolves on every call instead of being captured at module load, so it no longer depends on which module imported first.
+
+### Fixed
+- **A re-run of `setup` silently emptied the sidebar block.** The migration that strips pre-marker blocks matched the comment our own new block opens with, so it ate the body from between the markers and left the rows line gone — with `setup` still printing a tick. Caught on a live config during this release; the stripper is now skipped for any block that already has markers, and two tests hold it.
+
 ## [0.1.1] - 2026-08-24
 
 ### Fixed
