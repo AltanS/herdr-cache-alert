@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Editor & OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Scratch / local
+*.local
+*.tmp
+.cache/
+
+# Agent / local tooling state
+.claude/
+.tracker/

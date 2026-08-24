@@ -1,0 +1,69 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error",
+    "pedantic": "off",
+    "style": "off",
+    "restriction": "off",
+    "nursery": "off"
+  },
+  "plugins": [
+    "typescript",
+    "import",
+    "promise",
+    "node",
+    "unicorn",
+    "oxc"
+  ],
+  "ignorePatterns": [
+    "node_modules/**",
+    "tools/oxlint/anti-slop/**",
+    "bin/**"
+  ],
+  "jsPlugins": [
+    {
+      "name": "anti-slop",
+      "specifier": "./tools/oxlint/anti-slop/index.ts"
+    }
+  ],
+  "rules": {
+    // Every `await` in a loop here is ordered-by-contract, never throughput-bound.
+    // Two independent reasons, and both make `Promise.all` a CORRECTNESS regression:
+    // (1) `evaluate()` persists its memo through a read-modify-write on one
+    //     unlocked `state.json` (see src/store.ts) — running a pane pass in
+    //     parallel turns "a lost update costs one repaint" into the common case;
+    // (2) `watch.ts`'s loop IS the tick cadence, and `clearAll()` renames tabs,
+    //     which echoes back through the event bus.
+    "eslint/no-await-in-loop": "off",
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-known-value-widening": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-runtime-typeof": "error",
+    "anti-slop/no-shape-in-symbol-names": "error",
+    "anti-slop/no-unknown-parameters": "error",
+    "anti-slop/no-unknown-returns": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-unsafe-dictionary-type": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error"
+  },
+  "overrides": [
+    {
+      // A test FIXTURE is a deliberate partial: `{ phase: "cold" } as CacheState`
+      // says "these are the fields this behaviour reads", which is the assertion
+      // being made. A SAFETY comment on each would restate the test name. And the
+      // failure mode the rule guards against does not exist here — a cast that is
+      // wrong fails the test rather than shipping.
+      "files": ["test/**/*.ts"],
+      "rules": {
+        "anti-slop/require-safety-comment-for-type-assertion": "off"
+      }
+    }
+  ]
+}

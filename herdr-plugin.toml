@@ -1,0 +1,164 @@
+id = "herdr.cache-alert"
+name = "Cache Alert"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Show when an agent pane's prompt cache expires, and mark the turns that missed it"
+platforms = ["linux", "macos"]
+
+# No build step. Everything runs TypeScript directly through Bun or Node ≥ 22.6,
+# whichever scripts/run.sh finds (PATH, then the usual install locations, then
+# $CACHE_ALERT_BUN / $CACHE_ALERT_NODE).
+
+# --- panes -------------------------------------------------------------------
+
+# `overlay` is Herdr's transient full-cover primitive: it zooms over the active
+# pane and restores the previous focus and zoom when the process exits. That is
+# exactly right for a detail view you read once and dismiss — and exactly wrong
+# for an ambient badge, which is why the countdown lives in the tab bar instead.
+# Width and height are only accepted for `popup`, so they are not set here.
+[[panes]]
+id = "panel"
+title = "Cache detail"
+description = "Why this pane's cache badge says what it says — rule, TTL, source, last turn"
+command = ["bash", "scripts/run.sh", "panel"]
+placement = "overlay"
+
+# --- actions -----------------------------------------------------------------
+
+[[actions]]
+id = "explain"
+title = "Cache: explain this pane"
+description = "Open the provenance for this pane's badge — which rule, which TTL, and the doc it came from"
+contexts = ["pane"]
+command = ["bash", "scripts/run.sh", "action", "explain"]
+
+[[actions]]
+id = "status"
+title = "Cache: status of this pane"
+description = "One-line verdict in a notification, without opening a popup"
+contexts = ["pane", "global"]
+command = ["bash", "scripts/run.sh", "action", "status"]
+
+# The pane border badge is not toggleable and never will be — it is the one
+# worth having. This governs only the agent list's coloured $cache tokens, and
+# setup turns it on when it installs them. Bound to prefix+alt+c by setup;
+# Herdr 0.8.2's defaults use no alt.
+[[actions]]
+id = "toggle"
+title = "Cache: toggle the badge in the agent list"
+description = "Show or hide the coloured cache badge in the agent list"
+contexts = ["global", "pane"]
+command = ["bash", "scripts/run.sh", "action", "toggle"]
+
+[[actions]]
+id = "sync"
+title = "Cache: repaint every badge"
+description = "Force one painting pass over all agent panes"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "sync"]
+
+# The watcher is what makes the countdown a countdown. Herdr's events fire when
+# something HAPPENS, and an idle pane sliding toward expiry emits none — so a
+# badge repainted only on events would freeze at the last number it saw.
+[[actions]]
+id = "watch-start"
+title = "Cache: start the watcher"
+description = "Begin ticking every 30s (setup does this too; use this after stopping it)"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "watch-start"]
+
+[[actions]]
+id = "watch-stop"
+title = "Cache: stop the watcher and clear the badges"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "watch-stop"]
+
+[[actions]]
+id = "setup"
+title = "Cache: finish setup"
+description = "Link the plugin, install the `herdr-cache-alert` CLI, and start the watcher"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "setup"]
+
+# Link-mode plugins ARE their on-disk git checkout, and Herdr has no native
+# `plugin update`, so this action pulls and re-links in one step. Without it,
+# updating means a hand-typed sequence per machine — and forgetting the re-link
+# leaves Herdr on the action set it cached at link time. See src/update.ts.
+[[actions]]
+id = "update"
+title = "Cache: update"
+description = "Advance this checkout to the newest release and re-register it with Herdr"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "update"]
+
+# The consent for a MAJOR upgrade. `update` stays inside the major this install
+# is on, so crossing one is a separate, deliberate invocation — and it must be
+# invokable from HERE, because a plugin action has no TTY to prompt on. The flag
+# IS the consent; there is no prompt behind it.
+[[actions]]
+id = "update-major"
+title = "Cache: update across a major version"
+description = "Take the next major release, accepting that it needs a change from you"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "update-major"]
+
+[[actions]]
+id = "doctor"
+title = "Cache: diagnostics"
+description = "Write resolved paths, detected tiers and probe evidence to the plugin log"
+contexts = ["global"]
+command = ["bash", "scripts/run.sh", "action", "doctor"]
+
+# --- startup -----------------------------------------------------------------
+# Pane metadata does not survive a server restart, so repaint once Herdr is back.
+# This paints from live probes, not from remembered numbers — a badge restored
+# from a memo written before the outage would be stale by exactly the outage.
+#
+# `ensure` also STARTS THIS SESSION'S WATCHER if it has none. The watcher is
+# per-session and nothing else starts it, so `herdr --session <name>` would
+# otherwise come up repainting on events alone — which stops the moment the agent
+# goes idle, and idle is the case this plugin exists for.
+
+[[startup]]
+command = ["bash", "scripts/run.sh", "cli", "ensure"]
+
+# --- events ------------------------------------------------------------------
+# Event names are DOTTED here (`pane.agent_detected`); the payload Herdr hands
+# back spells the same event snake_case (`pane_agent_detected`). Writing the
+# payload spelling is silently accepted and NEVER fires — it surfaces only as an
+# "unknown event" warning in `herdr plugin link` output. Read those warnings.
+#
+# These are the cheap edges. The countdown itself is the watcher's job, not an
+# event's: subscribing to anything at keystroke frequency would cost a process
+# spawn per keypress and tell us nothing the clock does not already know.
+#
+# They run `ensure` rather than `sync`, so a watcher that died mid-session is
+# brought back by the next thing that happens instead of staying dead until the
+# operator notices. The check is a pidfile read — it costs nothing when one is
+# already running.
+
+# A pane acquires its session id here — the first moment a cache can be found.
+[[events]]
+on = "pane.agent_detected"
+command = ["bash", "scripts/run.sh", "cli", "ensure"]
+
+# A turn just ended, which is the one moment the cold/warm verdict changes.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bash", "scripts/run.sh", "cli", "ensure"]
+
+# A new pane may be an agent pane, and a closed one may free a tab from its
+# cold mark — both change what should be painted where.
+[[events]]
+on = "pane.created"
+command = ["bash", "scripts/run.sh", "cli", "ensure"]
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "scripts/run.sh", "cli", "ensure"]
+
+# Moving a pane changes its tab's pane count, which is what decides whether the
+# badge belongs on the pane border or on the tab label.
+[[events]]
+on = "pane.moved"
+command = ["bash", "scripts/run.sh", "cli", "ensure"]

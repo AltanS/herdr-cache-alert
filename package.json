@@ -1,0 +1,24 @@
+{
+  "name": "herdr-cache-alert",
+  "version": "0.1.0",
+  "license": "MIT",
+  "private": true,
+  "description": "Herdr plugin: show when an agent's prompt cache expires, and shout on a cold hit",
+  "type": "module",
+  "bin": {
+    "herdr-cache-alert": "./bin/herdr-cache-alert"
+  },
+  "scripts": {
+    "test": "bash scripts/test.sh",
+    "typecheck": "bun x tsc --noEmit",
+    "lint": "oxlint --max-warnings 0",
+    "lint:fix": "oxlint --fix --max-warnings 0",
+    "herdr-cache-alert": "bun src/cli.ts"
+  },
+  "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
+    "@types/bun": "latest",
+    "oxlint": "1.78.0",
+    "typescript": "^7.0.2"
+  }
+}

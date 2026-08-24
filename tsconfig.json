@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    // Node runs this source by stripping types, so nothing that needs real
+    // transformation (enums, namespaces, constructor parameter properties) may
+    // enter the codebase.
+    "erasableSyntaxOnly": true,
+    "noEmit": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "types": ["bun"]
+  },
+  "include": ["src"]
+}

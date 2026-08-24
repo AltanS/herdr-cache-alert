@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# `herdr-cache-alert` CLI shim. Safe to symlink from anywhere: it resolves its own symlink
+# chain so it can find the plugin root (macOS has no `readlink -f`).
+set -euo pipefail
+
+self="${BASH_SOURCE[0]}"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(cd "$(dirname "$self")" && pwd)/$link" ;;
+  esac
+done
+root="$(cd "$(dirname "$self")/.." && pwd)"
+
+exec bash "$root/scripts/run.sh" cli "$@"
