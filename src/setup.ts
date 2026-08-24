@@ -337,8 +337,28 @@ async function installTabBar(root: string): Promise<Step> {
     return { ok: false, what: "tab bar", detail: `${CONFIG_PATH} does not exist — start Herdr once, then re-run setup` };
   }
   const before = readFileSync(CONFIG_PATH, "utf8");
-  if (before.includes(`${BIN} tabbar`)) {
-    return { ok: true, what: "tab bar", detail: "the countdown is already in your tab bar" };
+
+  // OURS ALREADY, but possibly pointing at a checkout that has MOVED. A re-clone
+  // or a rename leaves the old absolute path in the entry; the command then fails,
+  // the entry clears itself, and the tab bar just goes blank. Setup used to report
+  // "already in your tab bar" over exactly that — a success message for a surface
+  // that was about to die.
+  const ourLine = before.split("\n").find((line) => line.includes(`${BIN} tabbar`));
+  if (ourLine !== undefined) {
+    const wanted = `tab_bar_right = [${tabBarEntry(root)}]`;
+    if (ourLine.trim() === wanted) {
+      return { ok: true, what: "tab bar", detail: "the countdown is already in your tab bar" };
+    }
+    // Only rewrite a line that is the whole entry and nothing but ours. A list the
+    // operator has added their own entries to is theirs, not ours to reformat.
+    if (ourLine.trimStart().startsWith("tab_bar_right = [") && ourLine.split("type = \"command\"").length === 2) {
+      return writeConfig(before.replace(ourLine, wanted), "tab bar", "repointed the tab-bar countdown at this checkout");
+    }
+    return {
+      ok: true,
+      what: "tab bar",
+      detail: "your tab_bar_right holds our entry among others — check the path if you have moved this checkout (`herdr-cache-alert tabbar-snippet`)",
+    };
   }
   // Never rewrite an existing list: it is ordered, it is capped, and it is
   // theirs. Hand over the entry to paste and change nothing.
@@ -357,26 +377,10 @@ async function installTabBar(root: string): Promise<Step> {
     ? before.slice(0, uiHeader.index + uiHeader[0].length) + `\n${comment}\n${entry}` + before.slice(uiHeader.index + uiHeader[0].length)
     : `${before}\n[ui]\n${comment}\n${entry}\n`;
 
-  const backup = `${CONFIG_PATH}.cache-alert-backup`;
-  try {
-    copyFileSync(CONFIG_PATH, backup);
-    writeFileSync(CONFIG_PATH, next);
-  } catch (err) {
-    return { ok: false, what: "tab bar", detail: `could not write ${CONFIG_PATH}: ${errorMessage(err)}` };
-  }
-  const check = await runSafe([herdrBin()], ["config", "check"]);
-  if (check.code !== 0) {
-    writeFileSync(CONFIG_PATH, before);
-    return {
-      ok: false,
-      what: "tab bar",
-      detail: `the tab-bar entry did not validate — your config was restored untouched (${check.stdout.trim() || check.stderr.trim()})`,
-    };
-  }
-  // Config is NOT hot-watched: without this the entry sits inert and the
-  // operator concludes the feature is broken.
-  await runSafe([herdrBin()], ["server", "reload-config"]);
-  return { ok: true, what: "tab bar", detail: "countdown added to the tab bar — visible even on a pane alone in its tab" };
+  // Through the shared writer, which backs up, validates, restores on failure and
+  // reloads EVERY server. This step used to carry its own copy of that dance, and
+  // its own single-server reload — so a second session kept the old config.
+  return writeConfig(next, "tab bar", "countdown added to the tab bar — visible even on a pane alone in its tab");
 }
 
 /**

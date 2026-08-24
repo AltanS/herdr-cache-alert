@@ -4,6 +4,12 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-24
+
+### Fixed
+- **A MOVED checkout kept a dead tab-bar command, and `setup` called it installed.** The entry holds an absolute path, and the check was only "does any `herdr-cache-alert tabbar` line exist". After a re-clone or a rename that path is gone: the command fails, the entry clears itself, and the tab bar silently goes blank — while `setup` printed "the countdown is already in your tab bar". It now compares the path and repoints its own entry, and says so.
+- The tab-bar step went through its own copy of the backup/validate/restore dance, with a single-server `reload-config`, so a second session kept the old config. It now uses the shared writer that fans out over every server.
+
 ## [0.1.0] - 2026-08-24
 
 First release.

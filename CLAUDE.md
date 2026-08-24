@@ -219,6 +219,20 @@ recently the agent happened to reply.
   alive forever and `stop` signals a stranger; it also cannot see a SIGKILL,
   which never runs the cleanup. The claim on the file is `wx` (O_EXCL), because
   write-then-read-back is a TOCTOU that both racers can pass.
+- **The tab-bar entry holds an ABSOLUTE PATH, so it rots when the checkout moves.**
+  A re-clone or a rename leaves the old path in `config.toml`; the command then
+  fails, the entry CLEARS ITSELF, and the tab bar just goes blank. `setup` must
+  compare the path, not merely detect that some entry of ours exists — reporting
+  "already in your tab bar" over a dead path is a success message for a surface
+  about to disappear. Every config writer goes through `writeConfig()`, which is
+  what makes the reload fan out.
+- **Uninstall in the order UNLINK, STOP, CLEAR.** The plugin is self-healing: while
+  the `[[events]]` hooks are still registered, clearing the badges fires `ensure`,
+  which spawns a fresh watcher and repaints everything. There is no `uninstall`
+  command, so this order is the whole procedure.
+- **`herdr pane list` reports metadata whose `--ttl-ms` has expired.** The RENDER
+  honours the TTL; the API dump does not. A badge visible in `pane list` is not
+  proof of a badge on screen — do not use it to conclude a paint is still live.
 - **Never key state by pane id.** Pane ids change on move and on server restart. The harness's
   session id is the identity of the conversation whose cache this is.
 - **A pane ALONE IN ITS TAB has no border, and nothing can give it one.** Herdr's own embedded config

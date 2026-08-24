@@ -91,3 +91,16 @@ test("a config with no cache row at all leaves every token missing", async () =>
   assert.deepEqual(report.configured, []);
   assert.equal(report.missing.length, 6);
 });
+
+test("a MOVED checkout is repointed, not reported as already installed", async () => {
+  // The old form tested only "does any `herdr-cache-alert tabbar` line exist".
+  // After a re-clone that line names a directory that is gone: the command fails,
+  // the entry clears itself, and the tab bar silently goes blank — while setup
+  // says "already in your tab bar". This asserts the two entries differ, which is
+  // what installTabBar now compares.
+  const here = tabBarEntry("/home/x/checkout-a");
+  const moved = tabBarEntry("/home/x/checkout-b");
+  assert.notEqual(here, moved);
+  assert.ok(here.includes("/home/x/checkout-a"));
+  assert.ok(!here.includes("/home/x/checkout-b"));
+});
