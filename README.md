@@ -198,19 +198,39 @@ to paste.
 
 #### In the sidebar: coloured, via metadata tokens
 
+<img src="docs/sidebar-states.png" alt="Eleven agents in the Herdr sidebar, each with a warm or cold cache badge; the selected row uses a darker green" width="420">
+
+Eleven agents, one glance. Green is warm, red is cold, and the number is how long
+you have left. Note the **selected row at the bottom** — same warm state as the
+rows above it, different green.
+
 `setup` adds this to `[ui.sidebar.agents]`, and it is where the colour comes from:
 
 ```toml
 rows = [["state_icon", "workspace", "tab"], ["agent",
-  { token = "$cache_warm",     fg = "#a6e3a1" },
-  { token = "$cache_expiring", fg = "#f9e2af", bold = true },
-  { token = "$cache_cold",     fg = "#f38ba8", bold = true }]]
+  { token = "$cache_warm",           fg = "#a6e3a1", bold = true },
+  { token = "$cache_expiring",       fg = "#f9e2af", bold = true },
+  { token = "$cache_cold",           fg = "#f38ba8", bold = true },
+  { token = "$cache_warm_focus",     fg = "#166534", bold = true },
+  { token = "$cache_expiring_focus", fg = "#92400e", bold = true },
+  { token = "$cache_cold_focus",     fg = "#991b1b", bold = true }]]
 ```
 
-Herdr styles a row token statically — one colour per token name — so one token
+Herdr styles a row token statically — one colour per token NAME — so one token
 could only ever be one colour. The plugin reports the badge under a per-state
-name and clears the other two, which is what buys green/yellow/red. Exactly one
-is ever set.
+name and clears the rest, which is what buys green/amber/red.
+
+**Six tokens, not three, and the screenshot is why.** Herdr draws the selected
+row on `active_row_bg`, which on a dark theme is a light grey — measured
+`#d2d3da` here against `#23273a` for its neighbours. A pale green tuned for the
+dark rows scores **1.00:1** on that one and vanishes on exactly the row you are
+looking at. No single colour fixes it: the best possible compromise is about
+3.1:1 on each. So the focused pane reports a different NAME, carrying a dark
+colour for the light row — 4.8:1 or better everywhere.
+
+Exactly one of the six is ever set. Two parser rules go with them: `fg` must be
+`#RGB` or `#RRGGBB` (named theme colours are rejected), and an unknown key is
+rejected too, so the line cannot drift silently.
 
 **If you already customise `[ui.sidebar.agents]`, setup will not touch it.** It
 prints the tokens instead: `herdr-cache-alert sidebar-snippet`. Until you add
