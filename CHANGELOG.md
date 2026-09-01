@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-09-01
+
+### Added
+- `setup` step **`integrations`**: reports Herdr's agent hook per installed harness. A MISSING hook is a `!` with the exact `herdr integration install <id>` command, because without it a pane has no session id and the plugin paints nothing, silently. An outdated hook still works, so it is only a `·` hint.
+- `doctor` reports `integrations` for claude, codex and opencode.
+
+### Changed
+- `setup` skips `herdr plugin link` for a GitHub install: `herdr plugin install` registers the plugin for every server already.
+
 ## [0.2.0] - 2026-08-24
 
 ### Added

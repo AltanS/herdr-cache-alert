@@ -3,527 +3,150 @@
 A [Herdr](https://herdr.dev) plugin that puts a prompt-cache countdown on every agent pane, and
 marks the turns that missed the cache.
 
-```
-┌ w2Y:p9 ────────────────────────────────────────────────── ⚡ 47m left ─┐
-│ > implement the retry logic                                           │
-```
-
-A cold turn re-reads your whole conversation at full input price and makes you wait for it. The
-badge tells you, before you step away, how long you have — and tells you afterwards when you paid
-for it anyway.
+A cold turn re-reads your whole conversation at full input price, and makes you wait for it. The
+badge tells you how long you have left, and tells you afterwards when you paid anyway.
 
 ![The cache badge in the Herdr agent list and tab bar](docs/agent-list.png)
 
-Two surfaces, one number. The **tab bar** (top right) covers the pane you are in — including a pane
-alone in its tab, which has no border to draw on. The **agent list** carries the whole herd at once:
-`maple` has 59 minutes left, while `biscuit-opencode` and `comet` are both cold and have to rebuild
-their prefix on the next turn. The selected row is drawn on a lighter background, so it gets its own
-colour — one green cannot read on both.
-
-- [Install](#install)
-- [What the badge means](#what-the-badge-means)
-- [Where the numbers come from](#where-the-numbers-come-from)
-- [Supported harnesses](#supported-harnesses)
-- [Adding a harness](#adding-a-harness)
-- [The watcher](#the-watcher)
-- [CLI](#cli)
-- [Config](#config)
-- [How it works](#how-it-works)
-- [Development](#development)
-- [License](#license)
-
 ## Install
 
-Needs **Node 22.6+ or [Bun](https://bun.sh)** — whichever you already have. There is no build step
-and no binary to download; the plugin runs its TypeScript directly.
+Requires **Herdr 0.8+** and **Node 22.6+ or [Bun](https://bun.sh)**. No build step, no clone.
 
 ```bash
-git clone git@github.com:AltanS/herdr-cache-alert.git
-cd herdr-cache-alert && ./bin/herdr-cache-alert setup
+herdr plugin install AltanS/herdr-cache-alert
+herdr plugin action invoke setup --plugin herdr.cache-alert
 ```
 
+Herdr's agent hook must be installed for each harness you use. Without it the plugin cannot identify
+the session, and it shows nothing. Run `herdr integration install claude` (also `codex`,
+`opencode`), then **restart the agent in its pane**: the hook reports the session id at start.
+
+Expected setup output:
+
 ```
-✓ plugin      linked into 2 session(s) from ~/src/herdr-cache-alert
-✓ cli         installed ~/.local/bin/herdr-cache-alert
-✓ keybinding  prefix+alt+c toggles the agent-list badge
-✓ sidebar     cache tokens styled in the agent sidebar
-✓ tab bar     countdown added to the tab bar
-✓ agent list  coloured badge ON — prefix+alt+c hides it
-✓ watcher     started (pid 41233) — ticks every 30s
-✓ badges      painted 6 of 6 agent panes
+✓ plugin        installed from GitHub, nothing to link
+✓ cli           installed ~/.local/bin/herdr-cache-alert
+✓ keybinding    prefix+alt+c toggles the agent-list badge
+✓ sidebar       cache tokens styled in the agent sidebar
+✓ tab bar       countdown added to the tab bar
+✓ agent list    coloured badge ON, prefix+alt+c hides it
+✓ watcher       started (pid 41233), ticks every 30s
+✓ integrations  claude hook current
+✓ badges        painted 6 of 6 agent panes
 ```
 
-`✓` did it · `·` nothing needed doing · `!` needs you, with the fix in the same line. A re-run is
-mostly dots. `setup` is safe to run again and it is how you repair a half-configured install:
+`✓` did it. `·` nothing to do. `!` needs you, with the remedy on the same line. Re-running setup is
+safe, and it is how you repair an install. Check with `herdr-cache-alert status`.
 
-1. links the plugin into Herdr (`herdr plugin link`),
-2. puts `herdr-cache-alert` in `~/.local/bin`,
-3. binds `prefix+alt+c` to the agent-list toggle,
-4. adds the coloured `$cache_*` tokens to your agent sidebar,
-5. adds the countdown to your tab bar, which is the surface that works everywhere,
-6. starts the watcher, which repaints every 30 seconds.
+Setup writes three marked blocks to `~/.config/herdr/config.toml`, between
+`# cache-alert:begin <name>` and `# cache-alert:end <name>`: the keybinding, the sidebar rows, and
+the `tab_bar_right` entry. Anything outside those markers is yours, and is never rewritten.
+Uninstall removes exactly those blocks.
 
-It does **not** touch your Claude Code config.
+`setup --no-keys` skips the keybinding, so you can bind `herdr.cache-alert.toggle` yourself. Setup
+also keeps a backup at `~/.config/herdr/config.toml.cache-alert-backup`, and uninstall leaves it
+there.
 
-Step 3 is the only one that touches a file you own, so it is careful about it: it refuses a chord
-already in use, keeps a backup at `config.toml.cache-alert-backup`, validates with
-`herdr config check` **before** leaving the new config in place, and restores the backup if that
-check fails. Pass `--no-keys` to skip it and bind `herdr.cache-alert.toggle` yourself.
-
-Check it worked:
+## Update and remove
 
 ```bash
-herdr-cache-alert status
+herdr plugin action invoke update --plugin herdr.cache-alert         # routine update
+herdr plugin action invoke update-major --plugin herdr.cache-alert   # crossing a major
+herdr plugin action invoke uninstall --plugin herdr.cache-alert
 ```
 
-Badges appear on agent panes within one tick. Already inside Herdr? The same thing runs from the
-action palette as **Cache: finish setup**.
+`herdr-cache-alert update` and `herdr-cache-alert uninstall` do the same from a shell. Uninstall
+supports `--dry-run`.
 
-## Update
-
-```bash
-herdr plugin action invoke update --plugin herdr.cache-alert
-```
-
-or `herdr-cache-alert update` from a shell. One step: it advances the checkout and re-registers the
-plugin with Herdr. The re-link matters — Herdr caches the action set at link time, so a release that
-adds an action answers `plugin_action_not_found` until the plugin is linked again.
-
-A routine update stays inside the major it is on. Crossing one needs the separate consent:
-
-```bash
-herdr plugin action invoke update-major --plugin herdr.cache-alert
-```
-
-### Removing it
-
-```bash
-herdr-cache-alert uninstall            # or --dry-run first
-```
-
-```
-✓ plugin   unlinked from 2 session(s)
-✓ watcher  stopped 2
-✓ badges   cleared 20 pane(s)
-✓ config   removed keybinding, sidebar, tab-bar
-✓ cli      removed ~/.local/bin/herdr-cache-alert
-✓ state    removed ~/.local/state/herdr/plugins/herdr.cache-alert
-
-kept:
-  the checkout at ~/src/herdr-cache-alert — delete it yourself if you want it gone
-  ~/.config/herdr/config.toml.cache-alert-backup — your config as it was before we edited it
-```
-
-**The order is not the obvious one, and that is the point.** This plugin is self-healing: every
-Herdr event hook runs `ensure`, which starts a watcher if the session has none. Clearing the badges
-first fires a hook, which spawns a fresh watcher, which repaints everything you just cleared. So it
-unlinks first, then stops, then clears.
-
-Everything it writes to your `config.toml` sits between markers:
-
-```toml
-# cache-alert:begin sidebar — remove with `herdr-cache-alert uninstall`
-[ui.sidebar.agents]
-rows = [...]
-# cache-alert:end sidebar
-```
-
-That is what lets removal be exact rather than a regex guessing at your file. Anything outside those
-markers is yours: if you already set `tab_bar_right`, or already have a `[ui.sidebar.agents]`, or
-already bound `prefix+alt+c`, `setup` reports it and changes nothing. `--keep-config` skips the
-config step entirely; `--dry-run` prints what would go and touches nothing.
-
-## What the badge means
+## What you see
 
 | badge | meaning |
 | --- | --- |
-| `⚡ 47m left` | warm — the cache survives another 47 minutes of you not sending anything |
-| `⚠ 4m left` | expiring — under a quarter of the TTL to go; finish the thought |
-| `❄ COLD` | no cache: either the last turn read nothing from it, or the clock ran out |
-| *(nothing)* | unknown — no adapter, no session, or no evidence yet |
+| `⚡ 44m left` | warm, the cache survives another 44 minutes of idle time |
+| `⚡ 4m left` | expiring, under 25% of the TTL (minimum 60s), drawn yellow in the sidebar |
+| `❄ COLD` | the last turn missed the cache |
+| *(nothing)* | unknown, and unknown paints nothing on purpose |
 
-**The number is idle time remaining, not elapsed time.** It counts down toward the moment the cache
-dies, and every message you send resets it to the full TTL — the window is sliding on every harness
-here. Walking away is what spends it.
+The number is idle time remaining. Every message you send resets it to the full TTL.
 
-**Unknown paints nothing.** A `?` on the border would be clutter that teaches you nothing, so
-silence is the answer whenever the plugin cannot honestly say.
+| surface | scope | works when |
+| --- | --- | --- |
+| **tab bar**, right side | focused pane | always, including a pane alone in its tab |
+| **pane border** | that pane | the pane shares a tab with another |
+| **agent sidebar**, coloured | every pane | the sidebar is open, `prefix+alt+c` toggles it |
 
-`❄ COLD` from an *observed* miss is sticky: it stays until a warm turn clears it, because the miss
-you need to see is usually one you were looking away for.
+<img src="docs/sidebar-states.png" alt="Agents in the Herdr sidebar with warm and cold cache badges" width="420">
 
-Minutes, never seconds. The watcher ticks every 30 seconds, so a second-by-second countdown would
-be wrong half the time it was on screen.
+## Nothing showing?
 
-**Colour** comes from config, not from the badge string. Herdr's client does not render ANSI escapes
-in pane metadata, but `ui.sidebar.agents.rows` styles each token — so the sidebar is coloured by
-state. The pane border and the tab bar stay monochrome and lean on the glyph.
-
-### Where it paints
-
-Three surfaces, because Herdr's chrome is conditional and the pane's own content
-is not:
-
-| surface | shows | scope | works when |
-| --- | --- | --- | --- |
-| **tab bar** | `⚡ 44m left` | focused pane | **always** — the tab bar is there over a solo pane |
-| **agent sidebar** | `claude ⚡ 44m left`, coloured | every pane | the sidebar is open |
-| **pane top border** | `⚡ 44m left` | that pane | the pane **shares a tab**, and `ui.show_agent_labels_on_pane_borders = true` |
-
-**A pane alone in its tab has no border, and nothing can give it one.** Tested
-three ways: the agent label is documented as "split pane borders" only,
-`ui.pane_outer_borders = true` changes nothing there, and a manual pane name does
-not render either. The tab bar is the answer.
-
-#### The tab bar: the one that always works
-
-`setup` adds a `command` entry to `ui.tab_bar_right`. Herdr re-runs it every five
-seconds **by itself**, which is the whole trick: nothing has to redraw and nobody
-has to push, so the number keeps falling while you are away from the machine.
-
-```toml
-[ui]
-tab_bar_right = [{ type = "command", command = "…/herdr-cache-alert tabbar", interval_seconds = 5, timeout_seconds = 3 }]
-```
-
-It reads the badge the watcher already published rather than probing again, so
-every surface agrees, and it costs one socket round trip. Herdr uses only the
-last line of output and **clears the entry on empty output** — so "nothing known"
-empties the slot for free, and a dead watcher clears it within one `--ttl-ms`
-window. Blank rather than wrong, as everywhere else here.
-
-Already set `tab_bar_right`? Setup will not rewrite your list — that list is
-ordered, capped, and yours. `herdr-cache-alert tabbar-snippet` prints the entry
-to paste.
-
-#### In the sidebar: coloured, via metadata tokens
-
-<img src="docs/sidebar-states.png" alt="Eleven agents in the Herdr sidebar, each with a warm or cold cache badge; the selected row uses a darker green" width="420">
-
-Eleven agents, one glance. Green is warm, red is cold, and the number is how long
-you have left. Note the **selected row at the bottom** — same warm state as the
-rows above it, different green.
-
-`setup` adds this to `[ui.sidebar.agents]`, and it is where the colour comes from:
-
-```toml
-rows = [["state_icon", "workspace", "tab"], ["agent",
-  { token = "$cache_warm",           fg = "#a6e3a1", bold = true },
-  { token = "$cache_expiring",       fg = "#f9e2af", bold = true },
-  { token = "$cache_cold",           fg = "#f38ba8", bold = true },
-  { token = "$cache_warm_focus",     fg = "#166534", bold = true },
-  { token = "$cache_expiring_focus", fg = "#92400e", bold = true },
-  { token = "$cache_cold_focus",     fg = "#991b1b", bold = true }]]
-```
-
-Herdr styles a row token statically — one colour per token NAME — so one token
-could only ever be one colour. The plugin reports the badge under a per-state
-name and clears the rest, which is what buys green/amber/red.
-
-**Six tokens, not three, and the screenshot is why.** Herdr draws the selected
-row on `active_row_bg`, which on a dark theme is a light grey — measured
-`#d2d3da` here against `#23273a` for its neighbours. A pale green tuned for the
-dark rows scores **1.00:1** on that one and vanishes on exactly the row you are
-looking at. No single colour fixes it: the best possible compromise is about
-3.1:1 on each. So the focused pane reports a different NAME, carrying a dark
-colour for the light row — 4.8:1 or better everywhere.
-
-Exactly one of the six is ever set. Two parser rules go with them: `fg` must be
-`#RGB` or `#RRGGBB` (named theme colours are rejected), and an unknown key is
-rejected too, so the line cannot drift silently.
-
-**If you already customise `[ui.sidebar.agents]`, setup will not touch it.** It
-prints the tokens instead: `herdr-cache-alert sidebar-snippet`. Until you add
-them, the agent list shows no badge — the tab bar and the pane border still do.
-
-`prefix+alt+c` shows or hides the agent-list badge. It governs these tokens,
-which is the thing the agent list actually renders.
-
-### If you see nothing at all
-
-1. `herdr-cache-alert doctor` — is a watcher running?
-2. Is `ui.hide_tab_bar_when_single_tab = true`? That removes the whole tab row.
-3. Is the sidebar open? `prefix+b` toggles it.
-4. `herdr-cache-alert status` — if that prints badges, the plugin is fine and only
-   the surface is missing.
-
-Herdr does **not** hot-reload `config.toml`. `setup` runs `herdr server reload-config`
-for you; if you edit the config by hand, run it yourself or the entry sits inert.
-
-There is deliberately no tab-label fallback: writing a countdown there means
-renaming a tab every minute, which churns Herdr's event bus and makes the tab bar
-twitch.
+1. `herdr integration status` shows the harness hook as current, and the agent was restarted after
+   you installed it.
+2. `herdr-cache-alert doctor`, then look at `panes[].session`.
+3. `herdr server reload-config` after any config edit. Herdr does not hot-reload `config.toml`.
+4. `herdr-cache-alert watch status`.
+5. `ui.hide_tab_bar_when_single_tab = true` hides the whole tab row, and the tab-bar badge with it.
+6. The sidebar opens with `prefix+b`.
 
 ## Where the numbers come from
 
-Cache lifetimes are vendor behaviour, not a standard. They change without warning, they differ
-between a subscription and an API key, and half of what is written about them online is a guess.
+Cache lifetimes are vendor behaviour, not a standard, so no bare constant is allowed here. Every TTL
+is a sourced claim carrying a documentation URL, a verbatim quote and the date it was checked.
+`herdr-cache-alert claims` lists them, and `claims --stale` flags the old ones. A TTL measured from
+the harness's own telemetry beats the documented one. When the plugin is unsure, the shorter TTL
+wins.
 
-So **no bare constant is allowed in this codebase.** Every cache number ships as a `Sourced<T>`: a
-value, a confidence, a documentation link, the date it was last checked, and the sentence it came
-from.
+## Harnesses
 
-```ts
-export interface Sourced<T> {
-  value: T;
-  confidence: "documented" | "reported" | "inferred" | "observed";
-  source: {
-    url: string;          // the exact page, never a search result
-    title: string;
-    publisher: string;
-    retrievedAt: string;  // ISO date the claim was last checked
-    quote?: string;       // verbatim from that page
-    kind: "vendor-doc" | "vendor-blog" | "vendor-changelog" | "community" | "observed";
-  };
-  note?: string;
-}
-```
+| harness | evidence it reads |
+| --- | --- |
+| **Claude Code** | the transcript: real cache token counts, and the TTL each turn wrote to |
+| **Codex CLI** | the rollout log: `cached_input_tokens` from `token_count` records |
+| **opencode** | the SQLite session store: `tokens.cache.read` |
+| **OpenRouter** | none, forced only, countdown from the rule with no probe |
 
-Read any of it back:
+`herdr integration install opencode` is what reports opencode's session id. OpenRouter is never
+auto-selected. Force it with `CACHE_ALERT_HARNESS=openrouter`.
 
-```bash
-herdr-cache-alert rules            # every rule, with its source and quote
-herdr-cache-alert explain          # why THIS pane says what it says
-herdr-cache-alert claims --stale 180   # claims nobody has re-verified lately
-```
+## CLI and config
 
-`claims` exits non-zero when something is stale, so it can gate a release. A cache rule nobody has
-re-read in six months is a number this plugin should stop asserting with a straight face.
+| command | does |
+| --- | --- |
+| `status [--pane ID]` | what every agent pane's cache is doing |
+| `explain [--pane ID]` | where a pane's number comes from, claim by claim |
+| `rules [--json]`, `claims [--stale DAYS]` | every cache rule with its sources, and the stale ones |
+| `doctor` | resolved paths, per-pane detection, watcher state |
+| `watch [--force\|stop\|status]` | the 30s repaint loop |
+| `toggle [on\|off]` | the agent-list badge, bound to `prefix+alt+c` |
+| `sync`, `clear` | paint every pane once, or remove every badge |
+| `tabbar`, `tabbar-snippet`, `sidebar-snippet` | the tab-bar line, and the config entries to paste |
+| `setup`, `update`, `uninstall` | install, advance, remove |
 
-### Measured beats documented
-
-`confidence: "observed"` outranks everything else, and it is not a figure of speech. Claude Code's
-transcript records which TTL each turn actually wrote to:
-
-```
-usage.cache_creation.ephemeral_1h_input_tokens: 2421
-usage.cache_creation.ephemeral_5m_input_tokens: 0
-```
-
-That turn proves the session is on the one-hour TTL. No documented rule, tier guess or environment
-sniff can outvote it.
-
-### When unsure, be pessimistic
-
-Tier detection can lie. `ANTHROPIC_API_KEY` being *set* does not mean it is *used* — an OAuth login
-wins over it, and an `apiKeyHelper` supplies one without the variable existing at all. Worse, Herdr
-exposes no per-pane environment, so what the plugin reads is *its own* environment, which is usually
-the pane's but never provably so.
-
-Every detection therefore carries its evidence and its confidence, and an unknown tier takes the
-harness's **shortest** rule. A wrong early warning costs you a glance. A wrong "still warm" sends you
-back to a cache that expired ten minutes ago.
-
-## Supported harnesses
-
-| harness | tier detection | countdown | cold detection |
-| --- | --- | --- | --- |
-| **Claude Code** | `~/.claude/.credentials.json`, `ANTHROPIC_*` | ✅ from the transcript | ✅ real token counts |
-| **Codex CLI** | `~/.codex/auth.json` (`auth_mode`) | ✅ from the rollout log | ✅ `cached_input_tokens` |
-| **opencode** | `auth.json` entry types | ✅ from the SQLite store | ✅ `tokens.cache.read` |
-| **OpenRouter** | n/a — a gateway is always per-token | ❌ forced-only, no probe | ❌ |
-
-Cold detection needs the harness to write cache token counts somewhere readable. Three of the four
-do. An adapter that cannot read them counts down and stays quiet about warm-versus-cold rather than
-guess, because a wrong `❄ COLD` is worse than no `❄ COLD`.
-
-**The TTL is not always a property of the tier.** OpenAI runs two cache regimes at once, split by
-model generation — 30 minutes on GPT-5.6 and later, 5-10 minutes idle before it. opencode is a
-different upstream provider per session. Both are handled by `ttlForProbe`, which picks the rule from
-what the probe actually found; the tier rule is the fallback for when that is not yet known, and it
-always carries the shorter number.
-
-**opencode needs Herdr's integration.** `herdr integration install opencode` is what reports the
-session id this adapter reads. Without it there is no session to look up and the badge stays silent.
-
-OpenRouter is never auto-selected: nothing calls itself "openrouter" in a pane, because an agent
-reaches it through some other CLI. Force it when you know that is what you are on:
-
-```bash
-CACHE_ALERT_HARNESS=openrouter herdr-cache-alert explain
-```
-
-## Adding a harness
-
-One file, one registry line. Export a `HarnessAdapter`:
-
-```ts
-export const myAdapter: HarnessAdapter = {
-  id: "myagent",          // MUST equal the `agent` label Herdr reports for the pane
-  label: "My Agent",
-  rules: MY_RULES,        // sourced, or it does not ship
-  detectTier,             // → { tier, confidence, evidence[] }
-  ttlOverride,            // optional: a TTL the harness's own config forces
-  ttlForProbe,            // optional: a TTL implied by the model/upstream the probe found
-  probe,                  // → the last turn's timing and cache counts, or null
-};
-```
-
-then add it to `ADAPTERS` in [`src/harness/index.ts`](./src/harness/index.ts).
-
-Four things worth knowing before you write one:
-
-- **There is no `matches(pane)` hook.** Herdr already labels the pane's agent, and the registry is a
-  map from that label onto an adapter. Self-matching would eventually let two adapters claim one
-  pane, and the loser would be whichever was registered second.
-- **`probe` returning `null` is a normal answer** — a fresh session, a harness with nothing to read,
-  a pane adopted mid-flight. Never guess there. The engine paints nothing rather than paint a
-  fiction.
-- **Persist through the store you are handed**, not your own dotfile. It is keyed by
-  `<adapter>:<session-id>` and ages entries out after a day.
-- **Report no cache counts rather than zeros** when your harness logs none. A `0` reads downstream as
-  "cold", which is a lie the badge would then paint.
-
-[`src/harness/openrouter.ts`](./src/harness/openrouter.ts) is the minimal worked example: rules and a
-tier detector, no telemetry at all. That combination is legal, and it still earns a countdown.
-
-## CLI
-
-```
-herdr-cache-alert status [--pane ID]     what every agent pane's cache is doing
-herdr-cache-alert explain [--pane ID]    where a pane's number comes from, claim by claim
-herdr-cache-alert rules [--json]         every cache rule, with sources
-herdr-cache-alert claims [--stale DAYS]  claims nobody has re-verified lately
-herdr-cache-alert tabbar                 one line for the tab bar (what Herdr calls on its interval)
-herdr-cache-alert tabbar-snippet         the ui.tab_bar_right entry that drives the countdown
-herdr-cache-alert sidebar-snippet        the [ui.sidebar.agents] rows that colour the badge
-herdr-cache-alert toggle [on|off]        the display-name fallback badge (prefix+alt+c)
-herdr-cache-alert sync                   paint every pane once
-herdr-cache-alert watch [--force|stop|status]
-herdr-cache-alert clear                  remove every badge and tab mark
-herdr-cache-alert setup [--no-keys]
-herdr-cache-alert update [--major]
-herdr-cache-alert doctor                 resolved paths and detection state
-```
-
-## Config
-
-`~/.config/herdr/plugins/config/herdr.cache-alert/config.json`, all keys optional:
+Config lives in `~/.config/herdr/plugins/config/herdr.cache-alert/config.json`. All keys optional.
 
 | key | default | effect |
 | --- | --- | --- |
+| `warnSeconds` | `300` | reserved, not read yet. The warning threshold is 25% of the TTL |
 | `quietWhileWarm` | `false` | show nothing until the cache is in trouble |
 | `notifyOnCold` | `false` | raise a Herdr notification on an observed miss |
+| `coldStickySeconds` | `120` | how long a cold mark stays after the cold turn |
+| `pollMs` | `5000` | reserved, not read yet. The watcher ticks every 30s |
 | `claimStaleDays` | `180` | how old a claim may get before `claims` complains |
 | `forceHarness` | `""` | pin an adapter instead of detecting one |
 | `forceTier` | `""` | pin `subscription` or `api` instead of detecting one |
-| `pollMs` | `5000` | reserved for adapters that poll |
-| `warnSeconds` | `300` | reserved; the badge uses 25% of the rule's TTL, min 60s |
 
-`CACHE_ALERT_HARNESS`, `CACHE_ALERT_TIER` and `CACHE_ALERT_QUIET=1` override the file for one
-invocation.
-
-`notifyOnCold` is **off** by default on purpose: ten panes going cold while you were at lunch is a
-notification storm, not a warning.
-
-## The watcher
-
-`setup` starts one background process per machine. It is what makes the countdown a countdown.
-
-**Every 30 seconds** it lists the agent panes, probes each one's harness log, recomputes the state,
-and repaints. A full tick over 11 panes measured **0.08s** — one seek of 128 KB per pane and one
-socket round trip. It re-reads `config.json` each tick, so a config edit takes effect without a
-restart.
-
-```bash
-herdr-cache-alert watch status     # running? which pid?
-herdr-cache-alert watch stop       # stop it
-herdr-cache-alert watch            # start it in the foreground
-herdr-cache-alert doctor           # says loudly when no watcher is running
-```
-
-### Two things refresh the badge, not one
-
-| trigger | when it fires | what it covers |
-| --- | --- | --- |
-| the watcher | every 30s, unconditionally | the clock ticking down while nothing happens |
-| Herdr events | agent detected, agent status changed, pane created/closed/moved | the moment a turn ends and the warm/cold verdict changes |
-
-**This means a dead watcher is invisible on a busy pane.** Events keep repainting it, so the badge
-looks healthy while every idle pane quietly goes blank. `doctor` is how you catch that — it reports
-`NO WATCHER RUNNING` in a notification rather than burying it in the log.
-
-### So what happens if you walk away?
-
-Nothing stops. The watcher keeps ticking, so the countdown keeps descending — `⚡ 12m left`, then
-`⚠ 4m left`, then `❄ COLD` the moment the TTL elapses. **What you see when you come back is
-accurate**, and the number is never more than 30 seconds stale. Since the badge is denominated in
-minutes, that is invisible.
-
-Come back after an hour on a subscription session and it will read `❄ COLD`, because it is. The
-first message you send then rebuilds the whole prefix at full input price — and the turn after that
-confirms it, because the Claude adapter reads the real token counts and reports the miss it
-measured rather than the one it predicted.
-
-### If the watcher dies, or the machine sleeps
-
-Badges do not freeze at a stale number. Every paint carries `--ttl-ms` of two ticks, so a badge that
-stops being re-reported is dropped by Herdr about 60 seconds later. Verified: a metadata token
-written with `--ttl-ms 5000` was gone 20 seconds later.
-
-That is the intended failure mode — **blank rather than wrong**. On a suspended laptop the whole
-plugin freezes with everything else, the badges clear, and the first tick after resume recomputes
-from real timestamps and paints the truth. There is no window in which an old number is presented
-as current.
-
-## How it works
-
-```
-herdr pane list ──> adapter registry ──> detectTier ──> rule
-                          │                              │
-                          └── probe (harness's own log) ──┤
-                                                          ▼
-                                    ttl = observed ?? remembered ?? override ?? rule
-                                                          ▼
-                              expiresAt = lastRequestAt + ttl   ──>  badge
-```
-
-**The countdown cannot be event-driven.** Herdr's events fire when something *happens*, and the
-entire point of this plugin is the stretch when nothing is happening — an idle pane sliding toward
-expiry emits no events at all. An event-only badge would freeze at `⚡ 40m` and still say it an hour
-later. Hence the watcher.
-
-The watcher is bounded on both sides: every paint carries `--ttl-ms` of about two ticks, so if the
-watcher dies its badges clear themselves within a tick instead of lying indefinitely. Every paint
-also carries a monotonic `--seq`, so a slow tick cannot overwrite a newer one.
-
-Every paint writes both surfaces, even when the string is unchanged. That is not wasted work:
-`--ttl-ms` means a badge that stops being re-reported expires, and `❄ COLD` never changes by
-definition — so skipping it made the one state worth showing the one that reliably vanished.
-
-Probes seek. A `~/.claude/projects` directory on the development machine measured 3.7 GB, so each
-probe reads the last 128 KB of one file and walks backwards to the newest turn.
+`CACHE_ALERT_HARNESS`, `CACHE_ALERT_TIER` and `CACHE_ALERT_QUIET=1` override the file for one run.
 
 ## Development
 
 ```bash
-bun install
-bun run test                       # 75 tests on node:test, then the CLI under both runtimes
-bun run lint                       # oxlint + the vendored anti-slop rules, --max-warnings 0
-bun x tsc --noEmit                 # strict, noUncheckedIndexedAccess, erasableSyntaxOnly
-./scripts/check-version.sh         # SemVer consistency across manifest, package.json, CHANGELOG
-herdr plugin link "$PWD"           # re-run after ANY manifest change
+git clone git@github.com:AltanS/herdr-cache-alert.git && bun install
+herdr plugin link "$PWD"     # re-run after ANY manifest change
+bun run lint && bun x tsc --noEmit && bun run test
 ```
 
-The suite runs on Node's built-in runner, so it adds no dependency and there is still no build
-step. `scripts/test.sh` points the state and config directories at a throwaway sandbox — without
-that a test writes your real `state.json` and lands on a live pane's countdown.
-
-It covers the seams that have already shipped a bug: the precedence ladder, the cold mark's
-stickiness, the badge vocabulary, the six sidebar token names, the event payload's spelling, and
-the update planner. It also walks every cache rule the plugin ships and fails if a `documented`
-claim carries no verbatim quote, or a `retrievedAt` will not parse. None of it can prove a badge
-appeared on screen — for that, still watch a live session.
-
-Both runtimes are supported and both must keep working:
-
-```bash
-CACHE_ALERT_RUNTIME=node ./bin/herdr-cache-alert status
-CACHE_ALERT_RUNTIME=bun  ./bin/herdr-cache-alert status
-```
-
-See [CLAUDE.md](./CLAUDE.md) for the working agreement, including the versioning rules and the
-Herdr API gotchas worth not relearning.
+All three gates must pass. Adding a harness is one adapter file in `src/harness/` plus a line in
+`src/harness/index.ts`. See [CLAUDE.md](./CLAUDE.md) for the claim contract, the versioning rules
+and the Herdr API traps.
 
 ## License
 

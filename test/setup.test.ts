@@ -12,7 +12,16 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allStateTokens } from "../src/herdr.ts";
-import { SIDEBAR_BLOCK, TOGGLE_KEY, sidebarTokenReport, tabBarEntry } from "../src/setup.ts";
+import {
+  SIDEBAR_BLOCK,
+  TOGGLE_KEY,
+  integrationRemedy,
+  isGithubInstall,
+  outdatedHint,
+  parseIntegrationStatus,
+  sidebarTokenReport,
+  tabBarEntry,
+} from "../src/setup.ts";
 
 const ROWS_LINE = SIDEBAR_BLOCK.split("\n").find((line) => line.startsWith("rows = ")) ?? "";
 
@@ -108,4 +117,56 @@ test("a MOVED checkout is repointed, not reported as already installed", async (
   assert.notEqual(here, moved);
   assert.ok(here.includes("/home/x/checkout-a"));
   assert.ok(!here.includes("/home/x/checkout-b"));
+});
+
+test("the three `herdr integration status` line shapes all parse", () => {
+  const states = parseIntegrationStatus(
+    [
+      "claude: current (v8) (/home/x/.claude/hooks/herdr-agent-state.sh)",
+      "codex: outdated (v4 < v8) (/home/x/.codex/herdr-agent-state.sh)",
+      "opencode: not installed (/home/x/.config/opencode/plugins/herdr-agent-state.js)",
+      "antigravity-cli: not installed (/home/x/.gemini/config/hooks/herdr-agent-state.sh)",
+      "",
+      "some other line entirely",
+    ].join("\n"),
+  );
+  assert.equal(states.get("claude"), "current");
+  assert.equal(states.get("codex"), "outdated");
+  assert.equal(states.get("opencode"), "not installed");
+  // Herdr adds harnesses release by release, and a hyphen is legal in an id.
+  assert.equal(states.get("antigravity-cli"), "not installed");
+  assert.equal(states.size, 4);
+});
+
+test("a missing hook is reported with the install command AND the reason", () => {
+  // Without the hook a pane has no session id, so the plugin paints nothing and
+  // NOTHING reports an error. The remedy line is the only place it surfaces.
+  const remedy = integrationRemedy("claude");
+  assert.match(remedy, /herdr integration install claude/);
+  assert.match(remedy, /restart Claude/);
+  assert.match(remedy, /no session id/);
+  assert.ok(!remedy.includes("—"), "no em dash in operator-facing text");
+});
+
+test("an OUTDATED hook is a hint, not a demand: it still reports the session id", () => {
+  // Measured: this machine ran the v4 Claude hook for weeks and painted the
+  // whole time. Marking it `!` would make a healthy install exit 1.
+  const hint = outdatedHint(["opencode"]);
+  assert.match(hint, /herdr integration install opencode/);
+  assert.match(hint, /hook outdated/);
+  assert.ok(!hint.includes("\u2014"), "no em dash in operator-facing text");
+  const both = outdatedHint(["codex", "opencode"]);
+  assert.match(both, /^codex, opencode hooks outdated,/);
+  assert.match(both, /install codex` and `herdr integration install opencode` update them$/);
+});
+
+test("a GitHub install is NOT linked again, and a plain clone still is", () => {
+  // `herdr plugin install owner/repo` unpacks under <config dir>/plugins/github/
+  // and registers the plugin on disk for every server, present and future.
+  // Linking it again registers a second copy of the same plugin id.
+  const dir = "/home/x/.config/herdr";
+  assert.ok(isGithubInstall(`${dir}/plugins/github/herdr.cache-alert-ab12cd`, dir));
+  assert.ok(!isGithubInstall("/home/x/playground/herdr-cache-alert", dir));
+  // A sibling directory whose name merely STARTS with the prefix is not inside it.
+  assert.ok(!isGithubInstall(`${dir}/plugins/github-mirror/herdr.cache-alert`, dir));
 });

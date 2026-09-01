@@ -1,6 +1,6 @@
 id = "herdr.cache-alert"
 name = "Cache Alert"
-version = "0.2.0"
+version = "0.3.0"
 min_herdr_version = "0.8.0"
 description = "Show when an agent pane's prompt cache expires, and mark the turns that missed it"
 platforms = ["linux", "macos"]

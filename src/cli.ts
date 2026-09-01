@@ -18,7 +18,7 @@ import { agentListEnabled, allMemos, setAgentList, STATE_DIR } from "./store.ts"
 import { clearAll, syncAll, syncPane } from "./sync.ts";
 import { runTabbar } from "./tabbar.ts";
 import { update, wantsMajor } from "./update.ts";
-import { pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
+import { integrationStates, pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
 import { keptAfterUninstall, uninstall } from "./uninstall.ts";
 import { report } from "./report.ts";
 import { BADGE_TTL_MS, ensureWatcher, runningWatcher, stopWatcher, watch } from "./watch.ts";
@@ -285,6 +285,10 @@ async function main(): Promise<number> {
             config: cfg,
             adapters: ADAPTERS.map((a) => ({ id: a.id, label: a.label, rules: a.rules.map((r) => r.id) })),
             watcher: runningWatcher(),
+            // Herdr's agent hook is what fills `pane.agent_session.value`.
+            // Without it every pane reads as unknown and nothing paints, with
+            // no error anywhere — so a bug report needs this line.
+            integrations: await integrationStates(),
             agentListBadge: agentListEnabled(),
             // A token this version paints but the config does not style renders
             // as nothing, and the paint still succeeds — so it can only be
