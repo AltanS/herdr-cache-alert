@@ -125,13 +125,14 @@ export function removeBlock(text: string, name: string): string {
 }
 
 /**
- * The three regions this plugin writes. Named, because `uninstall` removes them
+ * The regions this plugin writes. Named, because `uninstall` removes them
  * by name and a typo must be a compile error rather than a block left behind.
  */
 export const BLOCKS = {
   keys: "keybinding",
   sidebar: "sidebar",
   tabbar: "tab-bar",
+  borders: "pane-borders",
 } as const;
 
 /**

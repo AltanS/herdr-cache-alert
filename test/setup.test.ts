@@ -16,6 +16,7 @@ import { rowsDoubleTheBadge } from "../src/config-toml.ts";
 import {
   SIDEBAR_BLOCK,
   clientConfig,
+  planBorders,
   TOGGLE_KEY,
   integrationRemedy,
   isGithubInstall,
@@ -185,7 +186,7 @@ test("our rows do NOT double the badge, and pre-0.4 rows DO", () => {
 test("client-config on an EMPTY config writes all three blocks, with tab_bar_right inside [ui]", () => {
   const { text, notes } = clientConfig("", "/srv/cache-alert");
   assert.deepEqual(notes, []);
-  for (const name of ["keybinding", "sidebar", "tab-bar"]) assert.ok(text.includes(`cache-alert:begin ${name}`), name);
+  for (const name of ["keybinding", "sidebar", "tab-bar", "pane-borders"]) assert.ok(text.includes(`cache-alert:begin ${name}`), name);
   const headers = text.slice(0, text.indexOf("tab_bar_right")).match(/^\[.*\]$/gm) ?? [];
   assert.equal(headers.at(-1), "[ui]", "a bare key after another table lands in THAT table");
   assert.ok(text.indexOf("tab_bar_right") < text.indexOf("[ui.sidebar.agents]"));
@@ -198,4 +199,18 @@ test("client-config is idempotent, and leaves the client's own sidebar rows alon
   const theirs = clientConfig('[ui.sidebar.agents]\nrows = [["agent"]]\n', "/srv/x");
   assert.ok(!theirs.text.includes("cache-alert:begin sidebar"));
   assert.equal(theirs.notes.length, 1);
+});
+
+test("border labels are turned ON, because Herdr's default hides the border badge", () => {
+  const planned = planBorders("[ui]\nsidebar_width = 30\n");
+  assert.ok(planned.text?.includes("show_agent_labels_on_pane_borders = true"));
+  const headers = planned.text?.slice(0, planned.text.indexOf("show_agent_labels")).match(/^\[.*\]$/gm) ?? [];
+  assert.equal(headers.at(-1), "[ui]", "the key belongs to [ui], not to whatever table is last");
+});
+
+test("an operator's own border setting is left alone, false included", () => {
+  assert.equal(planBorders("[ui]\nshow_agent_labels_on_pane_borders = false\n").text, null);
+  assert.equal(planBorders("[ui]\nshow_agent_labels_on_pane_borders = true\n").text, null);
+  const ours = planBorders("[ui]\n").text ?? "";
+  assert.ok(planBorders(ours).text?.includes("cache-alert:begin pane-borders"), "our own block is rewritten, not refused");
 });

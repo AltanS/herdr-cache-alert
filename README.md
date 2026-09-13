@@ -20,9 +20,22 @@ herdr integration install claude     # or codex, opencode; then restart the agen
 
 The integration hook maps panes to sessions. Without it, the plugin displays nothing.
 
-Setup is idempotent and repairs existing installs. It writes three delimited blocks to
-`~/.config/herdr/config.toml`: a keybinding, sidebar rows, and a tab bar entry. It touches nothing
-outside those markers.
+### It needs lines in `config.toml`
+
+A Herdr plugin cannot change how Herdr draws its screen. Most of the badge depends on lines in
+`~/.config/herdr/config.toml`. **Setup adds them for you**, each between
+`# cache-alert:begin` and `# cache-alert:end` markers:
+
+| you see | needs a config line? |
+| --- | --- |
+| badge next to the agent name, in the sidebar | no |
+| badge colours in the sidebar | yes, `ui.sidebar.agents.rows` |
+| countdown in the tab bar | yes, `ui.tab_bar_right` |
+| badge on split pane borders | yes, `ui.show_agent_labels_on_pane_borders = true` |
+| `prefix+alt+c` toggle | yes, a `[[keys.command]]` entry |
+
+Setup never changes a line outside its markers. When you already set one of these keys yourself, setup
+keeps your value and tells you. You can run setup again at any time to repair an install.
 
 ## What you see
 
@@ -40,8 +53,9 @@ borders, and in the agent sidebar. Press `prefix+alt+c` to toggle the badge in t
 
 ## Remote clients
 
-Clients attached via `herdr --remote` use their local `config.toml`. Without local configuration,
-the badge appears only beside the agent name. To get colors, tab bar entries, and keybindings,
+Clients attached via `herdr --remote` use their local `config.toml`, not the server's. So the table
+above applies to the client machine: without those lines, the badge appears only beside the agent
+name. To get colors, tab bar entries, and keybindings,
 merge the blocks into the client config:
 
 ```bash

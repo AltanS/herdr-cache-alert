@@ -274,6 +274,35 @@ export function planTabBar(text: string, root: string): ConfigPlan {
   return { text: upsertBlock(text, BLOCKS.tabbar, body, { after: /^\[ui\]\s*$/m, orCreate: "[ui]" }), detail };
 }
 
+/**
+ * The pane border badge, which Herdr draws only with this key on.
+ *
+ * `ui.show_agent_labels_on_pane_borders` defaults to FALSE. Earlier releases
+ * painted `--title` every tick and never set the key, so on a fresh install the
+ * border badge the README promised never appeared. Nobody noticed, because the
+ * machine it was built on had set the key by hand.
+ *
+ * A value the operator set themselves is theirs, `false` included: that is a
+ * choice to hide agent labels on borders, not a missing line.
+ */
+export function planBorders(text: string): ConfigPlan {
+  const outside = text.replace(readBlock(text, BLOCKS.borders) ?? "", "");
+  const own = /^\s*show_agent_labels_on_pane_borders\s*=\s*(\S+)/m.exec(outside);
+  if (own) {
+    return {
+      text: null,
+      detail:
+        own[1] === "true"
+          ? "you already show agent labels on pane borders"
+          : "you set show_agent_labels_on_pane_borders to false, left alone. Set it to true for the border badge.",
+    };
+  }
+  return {
+    text: upsertBlock(text, BLOCKS.borders, "show_agent_labels_on_pane_borders = true", { after: /^\[ui\]\s*$/m, orCreate: "[ui]" }),
+    detail: "badge shown on split pane borders",
+  };
+}
+
 /** Writes one plan to this machine's config, or reports why it did not. */
 async function apply(what: string, plan: (text: string) => ConfigPlan): Promise<Step> {
   if (!existsSync(configPath())) return missingConfig(what);
@@ -289,7 +318,7 @@ export interface ClientConfig {
 }
 
 /**
- * A config for ANOTHER machine: `input` with our three blocks merged in.
+ * A config for ANOTHER machine: `input` with our blocks merged in.
  *
  * `herdr --remote` draws with the CLIENT's own config.toml, so a laptop that
  * attaches to this server gets none of the rows, the tab bar or the chord that
@@ -307,7 +336,7 @@ export function clientConfig(input: string, root: string): ClientConfig {
   const notes: string[] = [];
   // Tab bar FIRST: on an empty config it creates `[ui]`, which then reads above
   // `[ui.sidebar.agents]` instead of trailing after it. Both parse; one reads.
-  for (const plan of [(t: string) => planTabBar(t, root), planKeybinding, planSidebar]) {
+  for (const plan of [(t: string) => planTabBar(t, root), planBorders, planKeybinding, planSidebar]) {
     const planned = plan(text);
     if (planned.text === null) notes.push(planned.detail);
     else text = planned.text;
@@ -501,7 +530,7 @@ export function sidebarTokenReport(): SidebarTokenReport {
 }
 
 export interface SetupOptions {
-  /** Leave `config.toml` strictly alone — no keybinding, no sidebar rows, no tab bar. */
+  /** Leave `config.toml` strictly alone — no keybinding, sidebar rows, tab bar or border labels. */
   noKeys?: boolean;
 }
 
@@ -514,7 +543,8 @@ export async function setup(options: SetupOptions = {}): Promise<Step[]> {
     const keys = await apply("keybinding", planKeybinding);
     const sidebar = await apply("sidebar", planSidebar);
     const tabbar = await apply("tab bar", (text) => planTabBar(text, root));
-    steps.push(keys, sidebar, tabbar);
+    const borders = await apply("borders", planBorders);
+    steps.push(keys, sidebar, tabbar, borders);
     // The agent-list badge IS the `$cache_*` tokens, so the switch is only worth
     // turning on when those tokens are actually in the operator's sidebar rows.
     // Turning it on without them would toggle something nothing renders.
