@@ -18,7 +18,9 @@ import { agentListEnabled, allMemos, setAgentList, STATE_DIR } from "./store.ts"
 import { clearAll, syncAll, syncPane } from "./sync.ts";
 import { runTabbar } from "./tabbar.ts";
 import { update, wantsMajor } from "./update.ts";
-import { integrationStates, pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
+import { readFileSync } from "node:fs";
+import { configDoublesTheBadge } from "./config-toml.ts";
+import { clientConfig, integrationStates, pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
 import { keptAfterUninstall, uninstall } from "./uninstall.ts";
 import { report } from "./report.ts";
 import { BADGE_TTL_MS, ensureWatcher, runningWatcher, stopWatcher, watch } from "./watch.ts";
@@ -40,6 +42,9 @@ const USAGE = `${BIN} — prompt-cache countdown for Herdr agent panes
   toggle [on|off]        mirror the badge into the agent list (prefix+alt+c);
                          bare toggle flips it, and doctor reports the state
   sidebar-snippet        the [ui.sidebar.agents] rows that colour the badge
+  client-config          merge the rows, tab bar and chord into ANOTHER machine's
+                         config.toml, for \`herdr --remote\`: pipe its config in,
+                         get it back merged on stdout
   tabbar-snippet         the ui.tab_bar_right entry that drives the countdown
   tabbar                 one line for Herdr's tab-bar status area — what the
                          ui.tab_bar_right command entry calls every few seconds
@@ -179,6 +184,21 @@ async function main(): Promise<number> {
       return 0;
     }
 
+    // For a `herdr --remote` client, which draws with its OWN config.toml and so
+    // gets none of what `setup` wrote here. Run over ssh from that machine:
+    //   ssh <server> '~/.local/bin/herdr-cache-alert client-config' < config.toml > merged.toml
+    // Nothing is written anywhere: the client validates and installs the result.
+    case "client-config": {
+      // A TTY means nothing was piped in. Reading it would hang waiting for
+      // typing, so start from an empty config instead.
+      const input = process.stdin.isTTY ? "" : readFileSync(0, "utf8");
+      const merged = clientConfig(input, pluginRoot());
+      // stdout IS the config, so every note goes to stderr or it lands in the file.
+      for (const note of merged.notes) console.error(`${BIN}: ${note}`);
+      process.stdout.write(merged.text.endsWith("\n") ? merged.text : `${merged.text}\n`);
+      return 0;
+    }
+
     case "sync": {
       const painted = await syncAll(BADGE_TTL_MS, cfg);
       for (const p of painted) console.log(`${p.paneId} ${p.badge ?? "(cleared)"}`);
@@ -237,6 +257,7 @@ async function main(): Promise<number> {
       // easy to miss, and the toggle is invisible unless somebody says the chord.
       const notes = [
         `keys: ${TOGGLE_KEY} → show or hide the badge in the agent list`,
+        `remote: attach with \`herdr --remote <host> --remote-keybindings server\` to keep ${TOGGLE_KEY}; \`${BIN} client-config\` colours that machine's sidebar too.`,
         "next: leave a pane idle and watch the number fall. `herdr-cache-alert explain` says where it comes from.",
         "undo: `herdr-cache-alert uninstall` removes every trace, config included.",
       ];
@@ -294,6 +315,10 @@ async function main(): Promise<number> {
             // as nothing, and the paint still succeeds — so it can only be
             // found by comparing the two lists.
             sidebarTokens: sidebarTokenReport(),
+            // Off means this config's rows show `agent` beside a state token, so
+            // painting the badge into `agent` would show it twice here. A remote
+            // client with no config then shows no badge at all.
+            displayAgent: !configDoublesTheBadge(),
             rememberedSessions: allMemos().length,
             panes: rows,
           },

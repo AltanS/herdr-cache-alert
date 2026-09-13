@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-13
+
+### Added
+- A `herdr --remote` client with no config now shows the badge: it is painted into the built-in `agent` column (`claude ⚡ 44m left`).
+- `client-config`: pipe another machine's `config.toml` in over ssh, get it back with the rows, tab bar and chord merged in.
+- `$cache_agent` token: the agent's name, so rows can drop the `agent` column.
+- `doctor` reports `displayAgent`; `setup` names `--remote-keybindings server` for the chord on a remote client.
+
+### Changed
+- The sidebar rows `setup` writes use `$cache_agent` in place of `agent`. Re-run `setup` to get the badge on remote clients.
+- Rows that show `agent` beside a `$cache_*` state token keep the `agent` column plain, so an upgrade never shows the badge twice. Re-run `client-config` on a client that copied the old rows by hand.
+
 ## [0.3.0] - 2026-09-01
 
 ### Added

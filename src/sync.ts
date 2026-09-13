@@ -1,12 +1,13 @@
 /**
  * Painting. Evaluate every agent pane, then put the badge where it can be seen.
  *
- * Both surfaces are written on every paint, because neither is reliable alone:
+ * Every surface is written on every paint, because none is reliable alone:
  *   - the pane's TOP BORDER (`--title`), which exists only while the pane
  *     SHARES A TAB and only while `ui.show_agent_labels_on_pane_borders` is on;
  *   - the AGENT LIST entry, via the `$cache_*` state tokens, which renders
- *     regardless of borders and is therefore the one that reaches a pane alone
- *     in its tab.
+ *     regardless of borders but only where the client's rows name them;
+ *   - the built-in `agent` column (`--display-agent`), the one thing a client
+ *     with no config at all shows — a `herdr --remote` client on a new machine.
  *
  * There is deliberately NO tab-label fallback. Writing the countdown there means
  * renaming a tab every minute, which churns Herdr's event bus (our own rename
@@ -17,6 +18,7 @@
 
 import { badgeFor } from "./badge.ts";
 import { loadConfig, type Config } from "./config.ts";
+import { configDoublesTheBadge } from "./config-toml.ts";
 import { evaluate, memoKey, type CacheState } from "./engine.ts";
 import { getPane, getTab, listPanes, notify, renameTab, setCacheBadge, type CacheBadgeOptions, type PaneInfo } from "./herdr.ts";
 import { agentListEnabled, getMemo, putMemo } from "./store.ts";
@@ -73,6 +75,10 @@ export async function paintPane(pane: PaneInfo, cfg: Config, ttlMs: number): Pro
     agentList: agentListEnabled(),
     // The active row has a different background, so it needs a different colour.
     focused: pane.focused,
+    agentName: pane.agent ?? pane.agent_session?.agent ?? null,
+    // Read per paint for the same reason as the switch: `setup` rewrites the
+    // rows while the watcher runs, and that is what turns this on.
+    displayAgent: !configDoublesTheBadge(),
   };
   // Assigned rather than spread: `phase` must be ABSENT for an unknown state,
   // because setCacheBadge reads its absence as "clear all three state tokens".

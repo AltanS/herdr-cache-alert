@@ -166,6 +166,17 @@ recently the agent happened to reply.
   newly-named `$cache_*` token renders NOTHING there however often it is painted
   — and the paint succeeds, so there is no error to find.
 
+- **A `herdr --remote` client draws with ITS OWN `config.toml`.** Pane metadata
+  comes from the server; the rows, `tab_bar_right` and keybindings that decide
+  what renders come from the client (`--remote-keybindings` defaults to `local`).
+  A plugin manifest can ship none of them. So a new machine saw NO badge at all,
+  with every paint on the server succeeding. The only surface a config-less
+  client shows is the built-in `agent` column, which is why `--display-agent`
+  is back, and why our rows use `$cache_agent` instead of `agent`: rows that show
+  `agent` beside a state token would show the badge twice, so the painter keeps
+  `--display-agent` off for them (`rowsDoubleTheBadge`). `client-config` merges
+  our blocks into a client's config over ssh.
+
 - **Nothing else starts the watcher, so the hooks must.** `[[startup]]` and
   `[[events]]` run `ensure`, not `sync`: paint once, and spawn a watcher for THIS
   session if it has none. Without that, only the session where `setup` happened to

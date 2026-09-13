@@ -9,7 +9,7 @@
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { allStateTokens, eventPaneId, STATE_TOKENS } from "../src/herdr.ts";
+import { allSidebarTokens, allStateTokens, badgeArgs, eventPaneId, NAME_TOKEN, STATE_TOKENS } from "../src/herdr.ts";
 
 afterEach(() => {
   delete process.env.HERDR_PLUGIN_EVENT_JSON;
@@ -82,4 +82,31 @@ test("eventPaneId returns null rather than a wrong pane, so the caller sweeps in
 test("a pane id at the TOP level is not accepted — the real payload nests it under data", () => {
   process.env.HERDR_PLUGIN_EVENT_JSON = JSON.stringify({ pane_id: "w2H:p1" });
   assert.equal(eventPaneId(), null);
+});
+
+test("--display-agent is painted only when the rows will not ALSO show a token beside `agent`", () => {
+  // The badge in the built-in `agent` column is the only one a `herdr --remote`
+  // client with no config shows. Beside a state token it is the badge TWICE,
+  // which is what 0.1 shipped.
+  const on = badgeArgs("w1:p1", "⚡ 44m left", { agentList: true, agentName: "claude", displayAgent: true });
+  assert.ok(on.includes("--display-agent"));
+  assert.equal(on[on.indexOf("--display-agent") + 1], "claude ⚡ 44m left", "it REPLACES the name, so the name travels with it");
+
+  const doubled = badgeArgs("w1:p1", "⚡ 44m left", { agentList: true, agentName: "claude", displayAgent: false });
+  assert.ok(doubled.includes("--clear-display-agent") && !doubled.includes("--display-agent"));
+
+  const toggledOff = badgeArgs("w1:p1", "⚡ 44m left", { agentList: false, agentName: "claude", displayAgent: true });
+  assert.ok(!toggledOff.includes("--display-agent"), "the agent-list switch must govern every agent-list surface");
+});
+
+test("$cache_agent is set even with NO badge, or the rows that replaced `agent` lose the name", () => {
+  const unknown = badgeArgs("w1:p1", null, { agentName: "claude", displayAgent: true });
+  assert.ok(unknown.includes(`${NAME_TOKEN}=claude`));
+  assert.ok(unknown.includes("--clear-display-agent"));
+  const cleared = badgeArgs("w1:p1", null);
+  assert.equal(cleared[cleared.indexOf(NAME_TOKEN) - 1], "--clear-token", "clearing a pane must remove the name token too");
+});
+
+test("the sidebar token set is the six state tokens plus the name, and nothing renamed", () => {
+  assert.deepEqual(allSidebarTokens().toSorted(), [NAME_TOKEN, ...allStateTokens()].toSorted());
 });

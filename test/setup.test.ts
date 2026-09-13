@@ -12,8 +12,10 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allStateTokens } from "../src/herdr.ts";
+import { rowsDoubleTheBadge } from "../src/config-toml.ts";
 import {
   SIDEBAR_BLOCK,
+  clientConfig,
   TOGGLE_KEY,
   integrationRemedy,
   isGithubInstall,
@@ -83,14 +85,14 @@ test("sidebarTokenReport finds nothing missing when the config is ours", () => {
   const report = reportFor(SIDEBAR_BLOCK);
   assert.deepEqual(report.missing, []);
   assert.deepEqual(report.unstyled, []);
-  assert.equal(report.configured.length, 6);
+  assert.equal(report.configured.length, 7);
 });
 
 test("a config that predates the _focus tokens is reported as MISSING them", () => {
   const old = '[ui.sidebar.agents]\nrows = [["agent", { token = "$cache_warm", fg = "#a6e3a1" }]]\n';
   const report = reportFor(old);
   assert.deepEqual(report.configured, ["cache_warm"]);
-  assert.equal(report.missing.length, 5);
+  assert.equal(report.missing.length, 6);
   assert.ok(report.missing.includes("cache_warm_focus"));
 });
 
@@ -103,7 +105,7 @@ test("a config naming a token we no longer paint is reported as UNSTYLED", () =>
 test("a config with no cache row at all leaves every token missing", () => {
   const report = reportFor('[ui]\nsidebar_width = 30\n');
   assert.deepEqual(report.configured, []);
-  assert.equal(report.missing.length, 6);
+  assert.equal(report.missing.length, 7);
 });
 
 test("a MOVED checkout is repointed, not reported as already installed", async () => {
@@ -169,4 +171,31 @@ test("a GitHub install is NOT linked again, and a plain clone still is", () => {
   assert.ok(!isGithubInstall("/home/x/playground/herdr-cache-alert", dir));
   // A sibling directory whose name merely STARTS with the prefix is not inside it.
   assert.ok(!isGithubInstall(`${dir}/plugins/github-mirror/herdr.cache-alert`, dir));
+});
+
+test("our rows do NOT double the badge, and pre-0.4 rows DO", () => {
+  // Pre-0.4 rows show `agent` beside the state tokens. Painting --display-agent
+  // into them would print the badge twice, so the painter must see them.
+  assert.equal(rowsDoubleTheBadge(SIDEBAR_BLOCK), false);
+  assert.equal(rowsDoubleTheBadge(SIDEBAR_BLOCK.replaceAll('"$cache_agent"', '"agent"')), true);
+  assert.equal(rowsDoubleTheBadge('# rows = [["agent", "$cache_warm"]]\n'), false, "a comment is not a rows line");
+  assert.equal(rowsDoubleTheBadge('rows = [["agent"], ["$cache_agent"]]\n'), false, "the name token is not a badge");
+});
+
+test("client-config on an EMPTY config writes all three blocks, with tab_bar_right inside [ui]", () => {
+  const { text, notes } = clientConfig("", "/srv/cache-alert");
+  assert.deepEqual(notes, []);
+  for (const name of ["keybinding", "sidebar", "tab-bar"]) assert.ok(text.includes(`cache-alert:begin ${name}`), name);
+  const headers = text.slice(0, text.indexOf("tab_bar_right")).match(/^\[.*\]$/gm) ?? [];
+  assert.equal(headers.at(-1), "[ui]", "a bare key after another table lands in THAT table");
+  assert.ok(text.indexOf("tab_bar_right") < text.indexOf("[ui.sidebar.agents]"));
+  assert.ok(text.includes("/srv/cache-alert/bin/"), "command entries run on the SERVER, so the path is the server's");
+});
+
+test("client-config is idempotent, and leaves the client's own sidebar rows alone", () => {
+  const once = clientConfig('[ui]\nsidebar_width = 30\n', "/srv/x").text;
+  assert.equal(clientConfig(once, "/srv/x").text, once);
+  const theirs = clientConfig('[ui.sidebar.agents]\nrows = [["agent"]]\n', "/srv/x");
+  assert.ok(!theirs.text.includes("cache-alert:begin sidebar"));
+  assert.equal(theirs.notes.length, 1);
 });

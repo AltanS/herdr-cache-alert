@@ -194,17 +194,38 @@ export function allStateTokens(): string[] {
 }
 
 /**
- * Paints the cache badge, on BOTH surfaces Herdr offers.
+ * The agent's NAME, as a token of our own, set on every agent pane.
+ *
+ * It exists so the rows `setup` writes can drop the built-in `agent` column.
+ * That column is what `--display-agent` writes into, and the rows need the name
+ * from somewhere once they stop showing it. Additive to the six above.
+ */
+export const NAME_TOKEN = "cache_agent";
+
+/** Every token name the sidebar block should style, the name token included. */
+export function allSidebarTokens(): string[] {
+  return [NAME_TOKEN, ...allStateTokens()];
+}
+
+/**
+ * Paints the cache badge, on EVERY surface Herdr offers.
  *
  * `--title` lands on the pane's top border. That border only exists while the
  * pane shares a tab, and only while `ui.show_agent_labels_on_pane_borders` is
  * true — two conditions the plugin cannot check and does not control.
  *
- * The state tokens land in the agent list, which renders regardless of borders
- * and regardless of how many panes a tab holds. They are governed by the
- * agent-list switch (`opts.agentList`, bound to prefix+alt+c), and when it is off
- * they are actively CLEARED rather than merely skipped, so switching off cleans
- * up after itself.
+ * The state tokens land in the agent list, but only for a client whose
+ * `ui.sidebar.agents.rows` names them. A `herdr --remote` client draws with ITS
+ * OWN config.toml, so on a fresh machine they render nothing at all.
+ *
+ * `--display-agent` is the one surface a client with NO config shows: the
+ * default rows end in `["agent"]`. It is painted when `opts.displayAgent` says
+ * the server's own rows will not ALSO show the tokens beside `agent`, which is
+ * what printed the badge twice in 0.1.
+ *
+ * Everything in the agent list is governed by the agent-list switch
+ * (`opts.agentList`, bound to prefix+alt+c), and when it is off it is actively
+ * CLEARED rather than merely skipped, so switching off cleans up after itself.
  *
  * All of it is scoped to our own metadata source, so clearing never disturbs a
  * title or a name another source reported.
@@ -214,6 +235,10 @@ export interface CacheBadgeOptions {
   ttlMs?: number;
   /** Show the badge in the agent list, via the per-phase state tokens. */
   agentList?: boolean;
+  /** The agent's name, for `$cache_agent` and the `--display-agent` label. */
+  agentName?: string | null;
+  /** Also write `<name> <badge>` into the built-in `agent` column. */
+  displayAgent?: boolean;
   /** Is this the pane under the cursor? Picks the `_focus` colour variant. */
   focused?: boolean;
   /** Which state token to set. Omit to clear all three. */
@@ -225,6 +250,11 @@ export async function setCacheBadge(
   badge: string | null,
   opts: CacheBadgeOptions = {},
 ): Promise<void> {
+  await tryHerdr(...badgeArgs(paneId, badge, opts));
+}
+
+/** The `herdr` argv for one paint. Split out so the doubled-badge rules can be tested. */
+export function badgeArgs(paneId: string, badge: string | null, opts: CacheBadgeOptions = {}): string[] {
   const args = ["pane", "report-metadata", paneId, "--source", METADATA_SOURCE];
   if (badge) {
     args.push("--title", badge, "--token", `cache=${badge}`);
@@ -245,21 +275,23 @@ export async function setCacheBadge(
     if (token === wanted) args.push("--token", `${token}=${badge}`);
     else args.push("--clear-token", token);
   }
-  // NEVER --display-agent, and always clear it.
-  //
-  // It REPLACES the agent's name, so the badge had to be pasted onto the name to
-  // avoid losing it — and once the state tokens existed, the row rendered the
-  // badge TWICE: once squeezed into the name column and truncated (`⚡ 35m le…`),
-  // once in full from the token beside it. Clearing on every paint also means an
-  // upgrade from a version that set this cleans up after itself.
-  args.push("--clear-display-agent");
+  // The name is set even when there is no badge: rows that replaced `agent`
+  // with `$cache_agent` would otherwise show an agent with no name at all.
+  if (opts.agentName) args.push("--token", `${NAME_TOKEN}=${opts.agentName}`);
+  else args.push("--clear-token", NAME_TOKEN);
+  // It REPLACES the agent's name, so the name travels with the badge.
+  if (badge && opts.agentList && opts.displayAgent && opts.agentName) {
+    args.push("--display-agent", `${opts.agentName} ${badge}`);
+  } else {
+    args.push("--clear-display-agent");
+  }
   // `--seq` makes a late report lose to a newer one: ticks are spawned
   // processes and they do not finish in the order they started.
   if (opts.seq !== undefined) args.push("--seq", String(opts.seq));
   // `--ttl-ms` is what makes a dead watcher self-clear. Without it, killing the
   // watcher freezes a number on the border that keeps looking authoritative.
   if (opts.ttlMs !== undefined) args.push("--ttl-ms", String(opts.ttlMs));
-  await tryHerdr(...args);
+  return args;
 }
 
 export interface TabInfo {

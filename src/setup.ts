@@ -20,12 +20,13 @@ import { existsSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, lstatSync
 import { homedir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 import { BIN, PLUGIN_ID, pluginRoot } from "./config.ts";
-import { allStateTokens, herdrBin } from "./herdr.ts";
+import { allSidebarTokens, herdrBin } from "./herdr.ts";
 import {
   BLOCKS,
   configPath,
   onEveryServer,
   readBlock,
+  rowsDoubleTheBadge,
   stripLegacyBlocks,
   upsertBlock,
   writeConfig,
@@ -159,10 +160,14 @@ export const SIDEBAR_BLOCK = `
 # Bright colours for the dark rows, dark colours for the light active row.
 # Exactly one of the six is ever set.
 #
+# "$cache_agent" is the agent's name, in place of the built-in "agent" column.
+# The plugin writes the badge INTO that column too, for a remote client that has
+# no config of its own, so showing it here as well would show the badge twice.
+#
 # fg must be #RGB or #RRGGBB. Named theme colours are rejected by the parser,
 # and so is any key it does not know, so this line cannot drift silently.
 [ui.sidebar.agents]
-rows = [["state_icon", "workspace", "tab"], ["agent", { token = "$cache_warm", fg = "#a6e3a1", bold = true }, { token = "$cache_expiring", fg = "#f9e2af", bold = true }, { token = "$cache_cold", fg = "#f38ba8", bold = true }, { token = "$cache_warm_focus", fg = "#166534", bold = true }, { token = "$cache_expiring_focus", fg = "#92400e", bold = true }, { token = "$cache_cold_focus", fg = "#991b1b", bold = true }]]
+rows = [["state_icon", "workspace", "tab"], ["$cache_agent", { token = "$cache_warm", fg = "#a6e3a1", bold = true }, { token = "$cache_expiring", fg = "#f9e2af", bold = true }, { token = "$cache_cold", fg = "#f38ba8", bold = true }, { token = "$cache_warm_focus", fg = "#166534", bold = true }, { token = "$cache_expiring_focus", fg = "#92400e", bold = true }, { token = "$cache_cold_focus", fg = "#991b1b", bold = true }]]
 `;
 
 /** The `[ui.sidebar.agents]` body, without the explanatory comment header. */
@@ -186,55 +191,66 @@ function missingConfig(what: string): Step {
   return { ok: false, what, detail: `${configPath()} does not exist. Start Herdr once, then re-run setup.` };
 }
 
+/** The start of `planSidebar`'s refusal, which `setup` reads to decide the switch. */
+const SIDEBAR_CUSTOMISED = "you already customise [ui.sidebar.agents]";
+
 /**
- * Adds the toggle keybinding, or explains why it did not.
+ * What one config step would do to a config's text. `text` is null when the
+ * step leaves the file alone, and `detail` then says why.
+ *
+ * Pure, so `setup` (which writes this machine's config) and `client-config`
+ * (which prints a config for ANOTHER machine) cannot drift apart.
+ */
+export interface ConfigPlan {
+  text: string | null;
+  detail: string;
+}
+
+/**
+ * The toggle keybinding.
  *
  * A chord already bound OUTSIDE our markers belongs to the operator. Taking it
  * would silently steal a key they chose, so this reports and changes nothing.
  */
-async function installKeybinding(): Promise<Step> {
-  if (!existsSync(configPath())) return missingConfig("keybinding");
-  const text = currentConfig();
+export function planKeybinding(text: string): ConfigPlan {
   const chord = new RegExp(`key\\s*=\\s*"${TOGGLE_KEY.replace(/\+/g, "\\+")}"`);
   const outside = text.replace(readBlock(text, BLOCKS.keys) ?? "", "");
   if (chord.test(outside)) {
     return {
-      ok: true,
-      what: "keybinding",
+      text: null,
       detail: `${TOGGLE_KEY} is already bound to something else, left alone. Bind \`${PLUGIN_ID}.toggle\` to a chord you prefer.`,
     };
   }
-  return writeConfig(upsertBlock(text, BLOCKS.keys, KEY_BODY, "eof"), "keybinding", `${TOGGLE_KEY} toggles the agent-list badge`);
+  return { text: upsertBlock(text, BLOCKS.keys, KEY_BODY, "eof"), detail: `${TOGGLE_KEY} toggles the agent-list badge` };
 }
 
 /**
- * Styles the sidebar tokens.
+ * The sidebar tokens.
  *
  * A `[ui.sidebar.agents]` the operator wrote themselves is a display preference
  * somebody chose deliberately, so it is left alone with the snippet to paste.
  * Ours is rewritten in place, which is how a token added in a later release
  * reaches an install that already had the older set.
  */
-async function installSidebar(): Promise<Step> {
-  if (!existsSync(configPath())) return missingConfig("sidebar");
-  const text = currentConfig();
+export function planSidebar(text: string): ConfigPlan {
   const outside = text.replace(readBlock(text, BLOCKS.sidebar) ?? "", "");
   if (/^\s*\[ui\.sidebar\.agents\]/m.test(outside)) {
+    // Their rows showing `agent` beside a state token is the one shape the
+    // painter cannot fix alone: it keeps `--display-agent` off for it, so a
+    // client with no config of its own shows no badge.
+    const doubled = rowsDoubleTheBadge(outside)
+      ? " Your rows show `agent` beside a $cache token; use `$cache_agent` instead of `agent`, or a remote client with no config shows no badge."
+      : "";
     return {
-      ok: true,
-      what: "sidebar",
-      detail: "you already customise [ui.sidebar.agents], left alone. Run `herdr-cache-alert sidebar-snippet` and paste the tokens into your own rows.",
+      text: null,
+      detail: `${SIDEBAR_CUSTOMISED}, left alone. Run \`herdr-cache-alert sidebar-snippet\` and paste the tokens into your own rows.${doubled}`,
     };
   }
-  return writeConfig(
-    upsertBlock(text, BLOCKS.sidebar, SIDEBAR_BODY, "eof"),
-    "sidebar",
-    "cache tokens styled in the agent sidebar",
-  );
+  return { text: upsertBlock(text, BLOCKS.sidebar, SIDEBAR_BODY, "eof"), detail: "cache tokens styled in the agent sidebar" };
 }
 
 /**
- * Adds the tab-bar countdown — the surface that works on a pane alone in its tab.
+ * The tab-bar countdown — the surface that works on a pane alone in its tab.
  *
  * Two traps here, both load-bearing. `tab_bar_right` belongs to `[ui]`, and a key
  * appended at the END of the file lands in whatever table happens to be last —
@@ -244,21 +260,60 @@ async function installSidebar(): Promise<Step> {
  * blank with nothing reporting an error. `upsertBlock` rewrites our own entry, so
  * a re-run after a move repoints it.
  */
-async function installTabBar(root: string): Promise<Step> {
-  if (!existsSync(configPath())) return missingConfig("tab bar");
-  const text = currentConfig();
+export function planTabBar(text: string, root: string): ConfigPlan {
   const outside = text.replace(readBlock(text, BLOCKS.tabbar) ?? "", "");
   if (/^\s*tab_bar_right\s*=/m.test(outside)) {
     return {
-      ok: true,
-      what: "tab bar",
+      text: null,
       detail: "you already set tab_bar_right, left alone. Run `herdr-cache-alert tabbar-snippet` and add the entry to your list.",
     };
   }
   const body = `tab_bar_right = [${tabBarEntry(root)}]`;
   const had = readBlock(text, BLOCKS.tabbar);
   const detail = had !== null && !had.includes(tabBarEntry(root)) ? "repointed the countdown at this checkout" : "countdown added to the tab bar";
-  return writeConfig(upsertBlock(text, BLOCKS.tabbar, body, { after: /^\[ui\]\s*$/m, orCreate: "[ui]" }), "tab bar", detail);
+  return { text: upsertBlock(text, BLOCKS.tabbar, body, { after: /^\[ui\]\s*$/m, orCreate: "[ui]" }), detail };
+}
+
+/** Writes one plan to this machine's config, or reports why it did not. */
+async function apply(what: string, plan: (text: string) => ConfigPlan): Promise<Step> {
+  if (!existsSync(configPath())) return missingConfig(what);
+  const planned = plan(currentConfig());
+  if (planned.text === null) return { ok: true, what, detail: planned.detail };
+  return writeConfig(planned.text, what, planned.detail);
+}
+
+export interface ClientConfig {
+  text: string;
+  /** Why a block was left out. For stderr, never for the config itself. */
+  notes: string[];
+}
+
+/**
+ * A config for ANOTHER machine: `input` with our three blocks merged in.
+ *
+ * `herdr --remote` draws with the CLIENT's own config.toml, so a laptop that
+ * attaches to this server gets none of the rows, the tab bar or the chord that
+ * `setup` wrote here. A plugin manifest cannot ship any of them. This is the
+ * next best thing: the client pipes its config through, over ssh, and gets it
+ * back merged — with the same markers, the same refusals and the same `[ui]`
+ * placement as `setup`. Appending the blocks by hand is not safe, because
+ * `tab_bar_right` lands in whatever table the file happens to end on.
+ *
+ * The tab bar path is THIS checkout's, which is correct: Herdr resolves command
+ * entries on the server, not on the client.
+ */
+export function clientConfig(input: string, root: string): ClientConfig {
+  let text = stripLegacyBlocks(input);
+  const notes: string[] = [];
+  // Tab bar FIRST: on an empty config it creates `[ui]`, which then reads above
+  // `[ui.sidebar.agents]` instead of trailing after it. Both parse; one reads.
+  for (const plan of [(t: string) => planTabBar(t, root), planKeybinding, planSidebar]) {
+    const planned = plan(text);
+    if (planned.text === null) notes.push(planned.detail);
+    else text = planned.text;
+  }
+  // An empty input still gets `upsertBlock`'s separating blank lines on top.
+  return { text: text.replace(/^\n+/, ""), notes };
 }
 
 /**
@@ -432,7 +487,7 @@ export interface SidebarTokenReport {
 }
 
 export function sidebarTokenReport(): SidebarTokenReport {
-  const painted = allStateTokens();
+  const painted = allSidebarTokens();
   if (!existsSync(configPath())) return { configured: [], missing: painted, unstyled: [] };
   const rows = readFileSync(configPath(), "utf8")
     .split("\n")
@@ -456,14 +511,14 @@ export async function setup(options: SetupOptions = {}): Promise<Step[]> {
   if (options.noKeys) {
     steps.push({ ok: true, what: "config", detail: `skipped (--no-keys), nothing written to ${configPath()}`, skipped: true });
   } else {
-    const keys = await installKeybinding();
-    const sidebar = await installSidebar();
-    const tabbar = await installTabBar(root);
+    const keys = await apply("keybinding", planKeybinding);
+    const sidebar = await apply("sidebar", planSidebar);
+    const tabbar = await apply("tab bar", (text) => planTabBar(text, root));
     steps.push(keys, sidebar, tabbar);
     // The agent-list badge IS the `$cache_*` tokens, so the switch is only worth
     // turning on when those tokens are actually in the operator's sidebar rows.
     // Turning it on without them would toggle something nothing renders.
-    const tokensLive = sidebar.ok && !sidebar.detail.startsWith("you already customise");
+    const tokensLive = sidebar.ok && !sidebar.detail.startsWith(SIDEBAR_CUSTOMISED);
     const changed = agentListEnabled() !== tokensLive;
     setAgentList(tokensLive);
     steps.push({
