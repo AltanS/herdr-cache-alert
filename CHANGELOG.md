@@ -4,6 +4,16 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-09-14
+
+### Removed
+- The badge is no longer painted into the built-in `agent` column (`--display-agent`). It showed twice in any sidebar whose rows had `agent` beside a `$cache_*` token. A `herdr --remote` client with no config now needs `client-config` for a sidebar badge.
+- `doctor` no longer reports `displayAgent`.
+
+### Fixed
+- A watcher left on older code is replaced. It repainted every badge the old way each tick, so the UI flickered every 30s.
+- The watcher hands over to a new one when the checkout's version changes.
+
 ## [0.5.0] - 2026-09-13
 
 ### Added

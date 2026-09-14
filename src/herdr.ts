@@ -196,9 +196,8 @@ export function allStateTokens(): string[] {
 /**
  * The agent's NAME, as a token of our own, set on every agent pane.
  *
- * It exists so the rows `setup` writes can drop the built-in `agent` column.
- * That column is what `--display-agent` writes into, and the rows need the name
- * from somewhere once they stop showing it. Additive to the six above.
+ * The rows `setup` writes use it in place of the built-in `agent` column.
+ * Additive to the six above: token names are a public interface.
  */
 export const NAME_TOKEN = "cache_agent";
 
@@ -208,7 +207,7 @@ export function allSidebarTokens(): string[] {
 }
 
 /**
- * Paints the cache badge, on EVERY surface Herdr offers.
+ * Paints the cache badge on the two surfaces this plugin owns.
  *
  * `--title` lands on the pane's top border. That border only exists while the
  * pane shares a tab, and only while `ui.show_agent_labels_on_pane_borders` is
@@ -216,16 +215,18 @@ export function allSidebarTokens(): string[] {
  *
  * The state tokens land in the agent list, but only for a client whose
  * `ui.sidebar.agents.rows` names them. A `herdr --remote` client draws with ITS
- * OWN config.toml, so on a fresh machine they render nothing at all.
+ * OWN config.toml, so it needs `client-config` before it shows them.
  *
- * `--display-agent` is the one surface a client with NO config shows: the
- * default rows end in `["agent"]`. It is painted when `opts.displayAgent` says
- * the server's own rows will not ALSO show the tokens beside `agent`, which is
- * what printed the badge twice in 0.1.
+ * `--display-agent` is NOT a surface, and must not become one again. 0.4 painted
+ * the badge there for clients with no config, but the painter cannot see a
+ * client's rows, and every client with `agent` beside a state token showed the
+ * badge twice. It also fires `pane.agent_status_changed` on each change, which
+ * the event hooks answer with another paint. It is cleared on every paint, so a
+ * value an older version left behind goes away.
  *
- * Everything in the agent list is governed by the agent-list switch
- * (`opts.agentList`, bound to prefix+alt+c), and when it is off it is actively
- * CLEARED rather than merely skipped, so switching off cleans up after itself.
+ * The state tokens are governed by the agent-list switch (`opts.agentList`,
+ * bound to prefix+alt+c), and when it is off they are actively CLEARED rather
+ * than merely skipped, so switching off cleans up after itself.
  *
  * All of it is scoped to our own metadata source, so clearing never disturbs a
  * title or a name another source reported.
@@ -235,10 +236,8 @@ export interface CacheBadgeOptions {
   ttlMs?: number;
   /** Show the badge in the agent list, via the per-phase state tokens. */
   agentList?: boolean;
-  /** The agent's name, for `$cache_agent` and the `--display-agent` label. */
+  /** The agent's name, for `$cache_agent`. */
   agentName?: string | null;
-  /** Also write `<name> <badge>` into the built-in `agent` column. */
-  displayAgent?: boolean;
   /** Is this the pane under the cursor? Picks the `_focus` colour variant. */
   focused?: boolean;
   /** Which state token to set. Omit to clear all three. */
@@ -279,12 +278,8 @@ export function badgeArgs(paneId: string, badge: string | null, opts: CacheBadge
   // with `$cache_agent` would otherwise show an agent with no name at all.
   if (opts.agentName) args.push("--token", `${NAME_TOKEN}=${opts.agentName}`);
   else args.push("--clear-token", NAME_TOKEN);
-  // It REPLACES the agent's name, so the name travels with the badge.
-  if (badge && opts.agentList && opts.displayAgent && opts.agentName) {
-    args.push("--display-agent", `${opts.agentName} ${badge}`);
-  } else {
-    args.push("--clear-display-agent");
-  }
+  // Never set, always cleared: see the note above on why it is not a surface.
+  args.push("--clear-display-agent");
   // `--seq` makes a late report lose to a newer one: ticks are spawned
   // processes and they do not finish in the order they started.
   if (opts.seq !== undefined) args.push("--seq", String(opts.seq));

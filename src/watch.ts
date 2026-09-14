@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, pluginRoot } from "./config.ts";
+import { installedVersion, loadConfig, pluginRoot } from "./config.ts";
 import { sleep, errorMessage } from "./runtime.ts";
 import { STATE_DIR } from "./store.ts";
 import { syncAll } from "./sync.ts";
@@ -74,7 +74,19 @@ const BEAT_STALE_MS = TICK_MS * 3;
 interface Heartbeat {
   pid: number;
   beatAt: number;
+  /** The plugin version this process LOADED. Absent in beats older than 1.0.0. */
+  version?: string;
 }
+
+/**
+ * The version this process loaded, read once at startup.
+ *
+ * A watcher runs for weeks and never re-reads its own code. One started on 0.3
+ * kept painting the 0.3 way under a 0.5 checkout, while the 0.5 event hooks
+ * repainted every pane the new way right after each tick. The badges flipped
+ * every 30s, and each flip fired `pane.agent_status_changed` twice.
+ */
+const LOADED_VERSION = installedVersion();
 
 /** True when `pid` is a live process we may signal. */
 function alive(pid: number): boolean {
@@ -97,9 +109,15 @@ function readBeat(): Heartbeat | null {
   }
 }
 
+function ownBeat(): Heartbeat {
+  const hb: Heartbeat = { pid: process.pid, beatAt: Date.now() };
+  if (LOADED_VERSION) hb.version = LOADED_VERSION;
+  return hb;
+}
+
 function beat(): void {
   const tmp = `${BEAT_FILE}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ pid: process.pid, beatAt: Date.now() } satisfies Heartbeat));
+  writeFileSync(tmp, JSON.stringify(ownBeat()));
   renameSync(tmp, BEAT_FILE);
 }
 
@@ -156,7 +174,20 @@ export function stopWatcher(): boolean {
  */
 export async function ensureWatcher(): Promise<{ pid: number; started: boolean } | null> {
   const running = runningWatcher();
-  if (running !== null) return { pid: running, started: false };
+  if (running !== null && !outdated(readBeat())) return { pid: running, started: false };
+  if (running !== null) {
+    // A watcher from an older checkout. Its own version check cannot help when
+    // it predates that check, so replace it from here. The file is removed
+    // before the spawn, or the new watcher reads the old beat as fresh and
+    // stands down. Two hooks doing this at once is the race `watch` already
+    // settles: the file names one pid, and the other watcher exits.
+    try {
+      process.kill(running, "SIGTERM");
+    } catch {}
+    try {
+      unlinkSync(BEAT_FILE);
+    } catch {}
+  }
   try {
     const { spawn } = await import("node:child_process");
     // Through `run.sh`, so the child picks a runtime the same way every other
@@ -177,6 +208,17 @@ export async function ensureWatcher(): Promise<{ pid: number; started: boolean }
 }
 
 /**
+ * True when a beat comes from code other than the checkout on disk now.
+ *
+ * Only a known version on disk can make a watcher outdated. A manifest that
+ * cannot be read says nothing, and replacing a healthy watcher on every event
+ * for that reason would cost far more than it fixes.
+ */
+export function outdated(hb: { version?: string | null } | null, onDisk = installedVersion()): boolean {
+  return hb !== null && onDisk !== null && (hb.version ?? null) !== onDisk;
+}
+
+/**
  * Claims the heartbeat file for this process, atomically.
  *
  * `wx` is O_CREAT|O_EXCL: exactly one of two racing watchers can create the
@@ -188,7 +230,7 @@ export async function ensureWatcher(): Promise<{ pid: number; started: boolean }
  */
 function claim(): boolean {
   mkdirSync(STATE_DIR, { recursive: true });
-  const mine = JSON.stringify({ pid: process.pid, beatAt: Date.now() } satisfies Heartbeat);
+  const mine = JSON.stringify(ownBeat());
   try {
     writeFileSync(BEAT_FILE, mine, { flag: "wx" });
     return true;
@@ -238,6 +280,17 @@ export async function watch(opts: { force?: boolean } = {}): Promise<never | voi
     // reads its own — the tie-break is total and no mutual stand-down is possible.
     const held = readBeat();
     if (held !== null && held.pid !== process.pid && Date.now() - held.beatAt < BEAT_STALE_MS) {
+      process.exit(0);
+    }
+    // The checkout moved under this process: `update`, a `git pull`, a re-clone.
+    // Hand over to a watcher running the new code rather than wait for an event,
+    // because an idle workspace sends none. Our own beat must go first, or the
+    // replacement reads it as a live watcher and refuses to start.
+    if (outdated({ version: LOADED_VERSION })) {
+      try {
+        if (readBeat()?.pid === process.pid) unlinkSync(BEAT_FILE);
+      } catch {}
+      await ensureWatcher();
       process.exit(0);
     }
     // Beat FIRST. A sweep that throws must still prove this process is alive, or

@@ -170,12 +170,24 @@ recently the agent happened to reply.
   comes from the server; the rows, `tab_bar_right` and keybindings that decide
   what renders come from the client (`--remote-keybindings` defaults to `local`).
   A plugin manifest can ship none of them. So a new machine saw NO badge at all,
-  with every paint on the server succeeding. The only surface a config-less
-  client shows is the built-in `agent` column, which is why `--display-agent`
-  is back, and why our rows use `$cache_agent` instead of `agent`: rows that show
-  `agent` beside a state token would show the badge twice, so the painter keeps
-  `--display-agent` off for them (`rowsDoubleTheBadge`). `client-config` merges
-  our blocks into a client's config over ssh.
+  with every paint on the server succeeding. `client-config` merges our blocks
+  into a client's config over ssh; that is the only fix. 0.4 painted the badge
+  into the built-in `agent` column (`--display-agent`) for such clients, guarded
+  by reading the SERVER's rows. A guard can only read the config on its own
+  disk, and the client that doubled it was a different one. It was removed in
+  1.0.0 and must stay removed.
+
+- **A watcher never re-reads its own code.** One started ten days earlier was
+  still ticking under the 0.5 checkout. Each tick painted the old way,
+  the 0.5 hooks painted it back, and the badges flickered every 30s. The
+  heartbeat carries the version the watcher LOADED; `ensure` replaces a watcher
+  whose version differs from the manifest on disk, and the watcher hands over
+  by itself when the checkout moves.
+
+- **`--title` and `--display-agent` changes fire `pane.agent_status_changed`**
+  (twice); token changes and identical repaints fire nothing. Measured with a
+  throwaway `--source`. So a paint that flips between two values loops through
+  the event hooks.
 
 - **Nothing else starts the watcher, so the hooks must.** `[[startup]]` and
   `[[events]]` run `ensure`, not `sync`: paint once, and spawn a watcher for THIS
@@ -318,8 +330,6 @@ recently the agent happened to reply.
 - **The statusline stays dependency-free**: session id from the stdin JSON, transcript read directly,
   no `herdr` call and no watcher (20 ms measured). It calls `evaluate(..., { persist: false })` so it
   can never race the watcher for the memo file. It is a warm/cold VERDICT, not a countdown.
-- **`--display-agent` REPLACES the agent's name**, so pass the name through with the badge
-  (`claude ⚡ 44m`) or you have taken away the label you were decorating.
 - **Never repaint-skip an unchanged badge.** Every paint carries `--ttl-ms`, so a badge that is not
   re-reported EXPIRES. `❄ COLD` never changes by definition, which made it the one state that
   reliably vanished. This shipped as a real bug once — do not reintroduce it as an

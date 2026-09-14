@@ -6,7 +6,7 @@
 
 import { test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { sessionKey, BADGE_TTL_MS, TICK_MS } from "../src/watch.ts";
+import { sessionKey, outdated, BADGE_TTL_MS, TICK_MS } from "../src/watch.ts";
 
 afterEach(() => {
   delete process.env.HERDR_SOCKET_PATH;
@@ -43,4 +43,17 @@ test("a session name that is not filename-safe cannot escape the state dir", () 
 test("the badge TTL outlives one missed tick and not two", () => {
   assert.ok(BADGE_TTL_MS > TICK_MS, "a badge that expires before the next tick flickers");
   assert.ok(BADGE_TTL_MS < TICK_MS * 3, "a dead watcher must not leave an authoritative-looking number");
+});
+
+test("a watcher from an older checkout is outdated, so the hooks replace it", () => {
+  // A watcher never re-reads its own code. One left on old code repainted every
+  // pane the old way each tick, and the hooks repainted it back: a flicker every 30s.
+  assert.equal(outdated({ version: "0.5.0" }, "1.0.0"), true);
+  assert.equal(outdated({}, "1.0.0"), true, "a beat from before versioned beats is outdated too");
+  assert.equal(outdated({ version: "1.0.0" }, "1.0.0"), false);
+});
+
+test("an unreadable manifest never replaces a healthy watcher", () => {
+  assert.equal(outdated({ version: "1.0.0" }, null), false);
+  assert.equal(outdated(null, "1.0.0"), false, "no beat is no watcher, not an old one");
 });

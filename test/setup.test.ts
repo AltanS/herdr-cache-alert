@@ -12,7 +12,6 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allStateTokens } from "../src/herdr.ts";
-import { rowsDoubleTheBadge } from "../src/config-toml.ts";
 import {
   SIDEBAR_BLOCK,
   clientConfig,
@@ -172,15 +171,6 @@ test("a GitHub install is NOT linked again, and a plain clone still is", () => {
   assert.ok(!isGithubInstall("/home/x/playground/herdr-cache-alert", dir));
   // A sibling directory whose name merely STARTS with the prefix is not inside it.
   assert.ok(!isGithubInstall(`${dir}/plugins/github-mirror/herdr.cache-alert`, dir));
-});
-
-test("our rows do NOT double the badge, and pre-0.4 rows DO", () => {
-  // Pre-0.4 rows show `agent` beside the state tokens. Painting --display-agent
-  // into them would print the badge twice, so the painter must see them.
-  assert.equal(rowsDoubleTheBadge(SIDEBAR_BLOCK), false);
-  assert.equal(rowsDoubleTheBadge(SIDEBAR_BLOCK.replaceAll('"$cache_agent"', '"agent"')), true);
-  assert.equal(rowsDoubleTheBadge('# rows = [["agent", "$cache_warm"]]\n'), false, "a comment is not a rows line");
-  assert.equal(rowsDoubleTheBadge('rows = [["agent"], ["$cache_agent"]]\n'), false, "the name token is not a badge");
 });
 
 test("client-config on an EMPTY config writes all three blocks, with tab_bar_right inside [ui]", () => {

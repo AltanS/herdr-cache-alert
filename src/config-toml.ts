@@ -169,33 +169,6 @@ export function stripLegacyBlocks(text: string): string {
   return out;
 }
 
-/**
- * Does any agent rows line show the built-in `agent` column AND a `$cache_*` state token?
- *
- * Such rows would show `--display-agent` and the token side by side, which is
- * the badge twice. Rows written before 0.4.0, and rows an operator pasted from
- * an older snippet, look like that. The painter keeps `--display-agent` off for
- * them, so an upgrade does not start doubling badges before `setup` re-runs.
- *
- * `$cache_agent` does not count: it is the name, not a badge. Line-based, like
- * every other reader here; a rows array split over several lines is missed,
- * and the cost of a miss is a doubled badge, not a lost one.
- */
-export function rowsDoubleTheBadge(text: string): boolean {
-  return text
-    .split("\n")
-    .some((line) => !line.trimStart().startsWith("#") && /"agent"/.test(line) && /\$cache_(?!agent\b)/.test(line));
-}
-
-/** `rowsDoubleTheBadge` for the config on disk. A missing or unreadable file doubles nothing. */
-export function configDoublesTheBadge(): boolean {
-  try {
-    return rowsDoubleTheBadge(readFileSync(configPath(), "utf8"));
-  } catch {
-    return false;
-  }
-}
-
 // --- servers ------------------------------------------------------------------
 
 /**

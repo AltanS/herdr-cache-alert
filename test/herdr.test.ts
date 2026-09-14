@@ -84,23 +84,16 @@ test("a pane id at the TOP level is not accepted — the real payload nests it u
   assert.equal(eventPaneId(), null);
 });
 
-test("--display-agent is painted only when the rows will not ALSO show a token beside `agent`", () => {
-  // The badge in the built-in `agent` column is the only one a `herdr --remote`
-  // client with no config shows. Beside a state token it is the badge TWICE,
-  // which is what 0.1 shipped.
-  const on = badgeArgs("w1:p1", "⚡ 44m left", { agentList: true, agentName: "claude", displayAgent: true });
-  assert.ok(on.includes("--display-agent"));
-  assert.equal(on[on.indexOf("--display-agent") + 1], "claude ⚡ 44m left", "it REPLACES the name, so the name travels with it");
-
-  const doubled = badgeArgs("w1:p1", "⚡ 44m left", { agentList: true, agentName: "claude", displayAgent: false });
-  assert.ok(doubled.includes("--clear-display-agent") && !doubled.includes("--display-agent"));
-
-  const toggledOff = badgeArgs("w1:p1", "⚡ 44m left", { agentList: false, agentName: "claude", displayAgent: true });
-  assert.ok(!toggledOff.includes("--display-agent"), "the agent-list switch must govern every agent-list surface");
+test("--display-agent is never painted, only cleared, so the agent list cannot show the badge twice", () => {
+  // The painter cannot see a client's rows. Any client with `agent` beside a
+  // state token showed the badge twice while 0.4 and 0.5 painted it there.
+  const warm = badgeArgs("w1:p1", "⚡ 44m left", { agentList: true, agentName: "claude", phase: "warm" });
+  assert.ok(!warm.includes("--display-agent"));
+  assert.ok(warm.includes("--clear-display-agent"), "a value an older version left must go away");
 });
 
 test("$cache_agent is set even with NO badge, or the rows that replaced `agent` lose the name", () => {
-  const unknown = badgeArgs("w1:p1", null, { agentName: "claude", displayAgent: true });
+  const unknown = badgeArgs("w1:p1", null, { agentName: "claude" });
   assert.ok(unknown.includes(`${NAME_TOKEN}=claude`));
   assert.ok(unknown.includes("--clear-display-agent"));
   const cleared = badgeArgs("w1:p1", null);

@@ -1,6 +1,6 @@
 /** User config, read from $HERDR_PLUGIN_CONFIG_DIR/config.json (all keys optional). */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -21,6 +21,17 @@ export function pluginRoot(): string {
   const injected = process.env.HERDR_PLUGIN_ROOT;
   if (injected) return injected;
   return dirname(dirname(new URL(import.meta.url).pathname));
+}
+
+/** The version in a `herdr-plugin.toml`, or null when it names none we can read. */
+export function manifestVersion(toml: string): string | null {
+  return /^\s*version\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? null;
+}
+
+/** The version of the checkout at `root`, as the manifest on disk says it now. */
+export function installedVersion(root = pluginRoot()): string | null {
+  const path = join(root, "herdr-plugin.toml");
+  return existsSync(path) ? manifestVersion(readFileSync(path, "utf8")) : null;
 }
 
 export interface Config {

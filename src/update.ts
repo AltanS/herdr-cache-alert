@@ -18,9 +18,7 @@
  * one predicate — `git symbolic-ref -q HEAD` — picks the strategy.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { BIN } from "./config.ts";
+import { BIN, installedVersion, manifestVersion } from "./config.ts";
 import { runSafe } from "./runtime.ts";
 import { herdrBin } from "./herdr.ts";
 import { PLUGIN_ID, pluginRoot, type Step } from "./setup.ts";
@@ -37,11 +35,6 @@ export interface ReleaseTag {
 }
 
 const SEMVER_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
-
-/** The version in a `herdr-plugin.toml`, or null when it names none we can read. */
-export function manifestVersion(toml: string): string | null {
-  return /^\s*version\s*=\s*"([^"]+)"/m.exec(toml)?.[1] ?? null;
-}
 
 export function majorOf(version: string): number | null {
   const major = /^(\d+)\./.exec(version)?.[1];
@@ -176,11 +169,6 @@ export async function isManagedCheckout(root: string): Promise<boolean> {
 async function isShallow(root: string): Promise<boolean> {
   const { stdout, code } = await git(root, ["rev-parse", "--is-shallow-repository"]);
   return code === 0 && stdout.trim() === "true";
-}
-
-function installedVersion(root: string): string | null {
-  const path = join(root, "herdr-plugin.toml");
-  return existsSync(path) ? manifestVersion(readFileSync(path, "utf8")) : null;
 }
 
 /** Fetch `ref` and re-detach onto it, the way Herdr got this checkout here. */

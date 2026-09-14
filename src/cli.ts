@@ -19,7 +19,6 @@ import { clearAll, syncAll, syncPane } from "./sync.ts";
 import { runTabbar } from "./tabbar.ts";
 import { update, wantsMajor } from "./update.ts";
 import { readFileSync } from "node:fs";
-import { configDoublesTheBadge } from "./config-toml.ts";
 import { clientConfig, integrationStates, pluginRoot, setup, sidebarTokenReport, SIDEBAR_BLOCK, tabBarEntry, TOGGLE_KEY } from "./setup.ts";
 import { keptAfterUninstall, uninstall } from "./uninstall.ts";
 import { report } from "./report.ts";
@@ -315,10 +314,6 @@ async function main(): Promise<number> {
             // as nothing, and the paint still succeeds — so it can only be
             // found by comparing the two lists.
             sidebarTokens: sidebarTokenReport(),
-            // Off means this config's rows show `agent` beside a state token, so
-            // painting the badge into `agent` would show it twice here. A remote
-            // client with no config then shows no badge at all.
-            displayAgent: !configDoublesTheBadge(),
             rememberedSessions: allMemos().length,
             panes: rows,
           },

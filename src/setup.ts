@@ -26,7 +26,6 @@ import {
   configPath,
   onEveryServer,
   readBlock,
-  rowsDoubleTheBadge,
   stripLegacyBlocks,
   upsertBlock,
   writeConfig,
@@ -235,15 +234,9 @@ export function planKeybinding(text: string): ConfigPlan {
 export function planSidebar(text: string): ConfigPlan {
   const outside = text.replace(readBlock(text, BLOCKS.sidebar) ?? "", "");
   if (/^\s*\[ui\.sidebar\.agents\]/m.test(outside)) {
-    // Their rows showing `agent` beside a state token is the one shape the
-    // painter cannot fix alone: it keeps `--display-agent` off for it, so a
-    // client with no config of its own shows no badge.
-    const doubled = rowsDoubleTheBadge(outside)
-      ? " Your rows show `agent` beside a $cache token; use `$cache_agent` instead of `agent`, or a remote client with no config shows no badge."
-      : "";
     return {
       text: null,
-      detail: `${SIDEBAR_CUSTOMISED}, left alone. Run \`herdr-cache-alert sidebar-snippet\` and paste the tokens into your own rows.${doubled}`,
+      detail: `${SIDEBAR_CUSTOMISED}, left alone. Run \`herdr-cache-alert sidebar-snippet\` and paste the tokens into your own rows.`,
     };
   }
   return { text: upsertBlock(text, BLOCKS.sidebar, SIDEBAR_BODY, "eof"), detail: "cache tokens styled in the agent sidebar" };

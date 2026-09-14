@@ -54,8 +54,8 @@ borders, and in the agent sidebar. Press `prefix+alt+c` to toggle the badge in t
 ## Remote clients
 
 Clients attached via `herdr --remote` use their local `config.toml`, not the server's. So the table
-above applies to the client machine: without those lines, the badge appears only beside the agent
-name. To get colors, tab bar entries, and keybindings,
+above applies to the client machine: without those lines, the agent sidebar shows no badge. The
+border badge still shows. To get the sidebar badge, colors, tab bar entries, and keybindings,
 merge the blocks into the client config:
 
 ```bash

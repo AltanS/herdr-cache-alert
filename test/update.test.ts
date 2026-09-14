@@ -12,7 +12,6 @@ import {
   highestRelease,
   majorOf,
   majorVerdict,
-  manifestVersion,
   nextMajorRelease,
   parseRemoteTags,
   planUpdate,
@@ -20,6 +19,7 @@ import {
   wantsMajor,
   type ReleaseTag,
 } from "../src/update.ts";
+import { manifestVersion } from "../src/config.ts";
 
 const tag = (version: string, commit: string): ReleaseTag => ({
   tag: `v${version}`,
